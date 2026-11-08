@@ -187,6 +187,14 @@ button:focus-visible, input:focus-visible, textarea:focus-visible { outline: 3px
 .stage { flex: 1 1 0; min-height: 0; display: flex; align-items: center; justify-content: center; }
 .sheet { display: block; background: var(--paper); border-radius: 6px; box-shadow: var(--shadow); }
 #pad { touch-action: none; cursor: crosshair; }
+.sheet-wrap { position: relative; line-height: 0; }
+.zoom-pill {
+  position: absolute; top: 8px; right: 8px; display: flex; align-items: center; gap: 6px; line-height: 1;
+  border: none; border-radius: 999px; padding: 8px 10px 8px 12px; min-height: 36px;
+  background: rgba(46, 38, 67, .82); color: #FFFFFF; font-weight: 700; font-size: 13px; font-variant-numeric: tabular-nums;
+  box-shadow: var(--shadow);
+}
+.zoom-pill svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 2.4; stroke-linecap: round; stroke-linejoin: round; }
 .tray {
   flex: none; background: var(--tray); border: 1px solid var(--line); border-radius: 18px;
   padding: 10px; display: flex; flex-direction: column; gap: 10px;
@@ -263,8 +271,10 @@ button:focus-visible, input:focus-visible, textarea:focus-visible { outline: 3px
   position: fixed; z-index: 40; left: 50%; transform: translateX(-50%); width: max-content; max-width: calc(100% - 32px);
   bottom: calc(24px + env(safe-area-inset-bottom, 0px)); background: var(--ink); color: #FFFFFF;
   padding: 12px 16px; border-radius: 14px; font-weight: 600; box-shadow: var(--shadow); text-align: center;
-  animation: appear .2s ease-out;
+  animation: appear .2s ease-out; pointer-events: none;
 }
+/* on the drawing screen messages appear over the sheet, not over the colours */
+.app:has(#s-draw:not([hidden])) ~ .toast { bottom: auto; top: calc(64px + env(safe-area-inset-top, 0px)); }
 .scrim { position: fixed; inset: 0; z-index: 50; background: var(--scrim); display: flex; align-items: flex-end; justify-content: center; }
 .dialog {
   width: 100%; max-width: 560px; background: var(--tray); border-radius: 22px 22px 0 0;
@@ -407,7 +417,15 @@ button:focus-visible, input:focus-visible, textarea:focus-visible { outline: 3px
       </div>
       <button class="done-btn" id="sendDraw" type="button">Fatto</button>
     </header>
-    <main class="stage" id="stage"><canvas class="sheet" id="pad" aria-label="Foglio da disegno"></canvas></main>
+    <main class="stage" id="stage">
+      <div class="sheet-wrap">
+        <canvas class="sheet" id="pad" aria-label="Foglio da disegno"></canvas>
+        <button class="zoom-pill" id="zoomReset" type="button" hidden aria-label="Torna al foglio intero">
+          <span id="zoomLevel">100%</span>
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></svg>
+        </button>
+      </div>
+    </main>
     <section class="tray" id="tray" aria-label="Strumenti">
       <div class="tools">
         <div class="group" role="group" aria-label="Strumento">

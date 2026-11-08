@@ -557,7 +557,10 @@ async function startRound(r) {
 
 function showTask() {
   const t = S.task; if (!t || !t.ready) return;
-  if (t.kind === 'draw') { pad.locked = false; show('draw'); }
+  if (t.kind === 'draw') {
+    pad.locked = false; show('draw');
+    if (!t.note && !store.get('zoomHint')) { store.set('zoomHint', 1); toast('Con due dita puoi ingrandire e spostare il foglio.', 4500); }
+  }
   else {
     show('write');
     const seen = $('seen');
@@ -585,6 +588,10 @@ const pad = new Pad($('pad'), $('stage'), {
     const t = S.task; if (!t || t.kind !== 'draw') return;
     quiet(net.del(room(`work/${t.r}/${S.seat}/s/${strokeKey(i)}`)));
     saveLocalDraw(); updUndo();
+  },
+  onView(z) {
+    $('zoomReset').hidden = z < 1.01;
+    $('zoomLevel').textContent = Math.round(z * 100) + '%';
   }
 });
 function saveLocalDraw() {
@@ -945,6 +952,7 @@ function setupDrawTools() {
   $('pen').onclick = () => { pad.tool = 'pen'; renderTools(); };
   $('rub').onclick = () => { pad.tool = 'rub'; renderTools(); };
   $('fill').onclick = () => { pad.tool = 'fill'; renderTools(); };
+  $('zoomReset').onclick = () => pad.resetView();
   $('sizes').onclick = e => {
     const b = e.target.closest('[data-size]'); if (!b) return;
     pad.size = +b.dataset.size; if (pad.tool === 'fill') pad.tool = 'pen';
