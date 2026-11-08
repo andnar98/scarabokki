@@ -1,0 +1,17 @@
+# Publishes the site to Firebase Hosting every time something lands on main.
+name: Pubblica su Firebase
+on:
+  push:
+    branches:
+      - main
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: FirebaseExtended/action-hosting-deploy@v0
+        with:
+          repoToken: ${{ secrets.GITHUB_TOKEN }}
+          firebaseServiceAccount: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_SCARABOKKI_208A6 }}
+          channelId: live
+          projectId: scarabokki-208a6

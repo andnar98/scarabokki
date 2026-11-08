@@ -1,0 +1,522 @@
+<!doctype html>
+<html lang="it">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover, interactive-widget=resizes-content">
+<title>Scarabokki</title>
+<meta name="description" content="Scrivi, disegna, indovina. Il telefono senza fili disegnato, tra amici.">
+<meta name="theme-color" content="#F4EFFF">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="Scarabokki">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="icon-180.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Figtree:wght@400;600;700&family=Lilita+One&display=swap">
+<style>
+/* Layout: one-screen phone app. Each screen is a column: a top bar, a flexible middle, an action area under the thumb.
+   Look: one pastel theme on purpose (lavender to blush paper, butter-yellow actions, plum ink), the same in day and night mode. */
+:root {
+  --desk: #F4EFFF;
+  --desk-2: #FFF0F4;
+  --tray: #FFFFFF;
+  --ink: #2E2643;
+  --muted: #6F6787;
+  --line: rgba(46, 38, 67, .12);
+  --well: rgba(124, 98, 214, .10);
+  --edge: rgba(46, 38, 67, .18);
+  --paper: #FFFFFF;
+  --marker: #FFD966;
+  --marker-ink: #2E2643;
+  --lilac: #D9CCFF;
+  --sky: #BFE3FF;
+  --mint: #BDEFD8;
+  --ok: #24855A;
+  --blush: #FFDDE4;
+  --alarm: #FF9A9A;
+  --alarm-ink: #B83846;
+  --on-alarm: #2E2643;
+  --scrim: rgba(46, 38, 67, .35);
+  --press: 0 2px 0 rgba(46, 38, 67, .16);
+  --shadow: 0 1px 2px rgba(80, 60, 140, .08), 0 8px 24px rgba(80, 60, 140, .10);
+  --font-display: "Lilita One", "Arial Rounded MT Bold", "Trebuchet MS", system-ui, sans-serif;
+  --font-body: "Figtree", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  color-scheme: light;
+}
+
+*, *::before, *::after { box-sizing: border-box; }
+[hidden] { display: none !important; }
+html { height: 100%; overscroll-behavior: none; -webkit-text-size-adjust: 100%; touch-action: manipulation; }
+body {
+  height: 100%; margin: 0; overflow: hidden; overscroll-behavior: none;
+  background: var(--desk) linear-gradient(165deg, var(--desk) 0%, var(--desk-2) 100%) fixed; color: var(--ink); font: 15px/1.4 var(--font-body);
+  -webkit-tap-highlight-color: transparent;
+  -webkit-user-select: none; user-select: none; -webkit-touch-callout: none;
+}
+input, textarea { -webkit-user-select: text; user-select: text; -webkit-touch-callout: default; }
+canvas { -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; -webkit-user-drag: none; }
+button, input, textarea { font: inherit; color: inherit; }
+button { cursor: pointer; touch-action: manipulation; }
+button:focus-visible, input:focus-visible, textarea:focus-visible { outline: 3px solid var(--ink); outline-offset: 2px; }
+
+.app {
+  height: var(--app-h, 100%); max-width: 560px; margin: 0 auto; position: relative;
+  padding-top: max(10px, env(safe-area-inset-top, 0px));
+  padding-bottom: max(10px, env(safe-area-inset-bottom, 0px));
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+}
+.screen { height: 100%; display: flex; flex-direction: column; gap: 12px; min-height: 0; }
+
+/* ---------- shared pieces ---------- */
+.eyebrow { font-size: 11px; font-weight: 700; letter-spacing: .09em; text-transform: uppercase; color: var(--muted); }
+.title { margin: 2px 0 0; font-family: var(--font-display); font-weight: 400; font-size: clamp(17px, 4.6vw, 21px); line-height: 1.15; text-wrap: balance; overflow-wrap: anywhere; }
+.btn {
+  font-family: var(--font-display); font-size: 18px; line-height: 1; padding: 15px 14px; min-height: 50px;
+  border-radius: 14px; border: 1px solid var(--line); background: var(--well); width: 100%;
+}
+.btn.primary { background: var(--marker); color: var(--marker-ink); border-color: transparent; box-shadow: var(--press); }
+.btn.primary:active { transform: translateY(1px); box-shadow: none; }
+.btn.ghost { background: transparent; }
+.btn.small { width: auto; font-size: 16px; padding: 10px 14px; min-height: 42px; }
+.btn:disabled { opacity: .45; cursor: default; box-shadow: none; transform: none; }
+.link { background: none; border: none; padding: 8px 2px; font-weight: 700; color: var(--ink); text-decoration: underline; text-underline-offset: 3px; }
+
+.bar { display: grid; grid-template-columns: auto 1fr auto; align-items: center; gap: 12px; flex: none; }
+.bar .prompt { min-width: 0; }
+.timer {
+  font-family: var(--font-display); font-size: 20px; line-height: 1;
+  min-width: 3.4em; text-align: center; padding: 9px 10px; border-radius: 999px;
+  background: var(--tray); border: 1px solid var(--line); font-variant-numeric: tabular-nums;
+}
+.timer.urgent { background: var(--alarm); color: var(--on-alarm); border-color: transparent; animation: pulse 1s ease-in-out infinite; }
+@keyframes pulse { 50% { transform: scale(1.08); } }
+.done-btn {
+  font-family: var(--font-display); font-size: 18px; line-height: 1;
+  background: var(--marker); color: var(--marker-ink); border: none; border-radius: 14px;
+  padding: 12px 16px; min-height: 44px; box-shadow: var(--press);
+}
+.done-btn:active { transform: translateY(1px); box-shadow: none; }
+
+.av {
+  flex: none; width: 34px; height: 34px; border-radius: 50%; display: grid; place-items: center;
+  background: var(--av, var(--lilac)); color: var(--ink); font-family: var(--font-display); font-size: 16px; line-height: 1;
+  position: relative;
+}
+.av.sm { width: 26px; height: 26px; font-size: 13px; }
+.av[data-off]::after {
+  content: ""; position: absolute; inset: 0; border-radius: 50%; background: var(--desk); opacity: .55;
+}
+
+/* ---------- loading ---------- */
+.loading { align-items: center; justify-content: center; text-align: center; color: var(--muted); }
+.spinner { width: 34px; height: 34px; border-radius: 50%; border: 4px solid var(--line); border-top-color: var(--ink); animation: spin .8s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* ---------- home ---------- */
+.home { justify-content: center; gap: 18px; overflow-y: auto; }
+.brand { text-align: center; }
+.wordmark {
+  margin: 0; font-family: var(--font-display); font-weight: 400; font-size: clamp(46px, 15vw, 64px); line-height: 1;
+  letter-spacing: .01em; position: relative; display: inline-block;
+}
+.wordmark svg { position: absolute; left: -4%; right: -4%; bottom: -10px; width: 108%; height: 22px; z-index: -1; }
+.brand-wrap { position: relative; z-index: 0; display: inline-block; }
+.tag { margin: 14px 0 0; color: var(--muted); font-size: 16px; }
+.name-field { display: flex; flex-direction: column; gap: 6px; }
+.field-label { font-weight: 700; font-size: 14px; }
+.input {
+  width: 100%; font-size: 18px; padding: 13px 14px; border-radius: 12px; border: 1px solid var(--line);
+  background: var(--paper); color: var(--ink); min-height: 50px;
+}
+.input::placeholder { color: #A39BB8; }
+.choices { display: flex; flex-direction: column; gap: 10px; }
+.choice { margin: 0; background: var(--tray); border: 1px solid var(--line); border-radius: 18px; padding: 16px; display: flex; flex-direction: column; gap: 14px; }
+.choice-head { display: flex; gap: 12px; align-items: flex-start; }
+.choice h2 { margin: 0; font-family: var(--font-display); font-weight: 400; font-size: 22px; line-height: 1.1; }
+.choice p { margin: 4px 0 0; color: var(--muted); font-size: 14px; text-wrap: pretty; }
+.badge { flex: none; width: 40px; height: 40px; border-radius: 12px; display: grid; place-items: center; background: var(--marker); color: var(--marker-ink); }
+.badge.alt { background: var(--sky); color: var(--ink); }
+.badge svg { width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-width: 2.4; stroke-linecap: round; stroke-linejoin: round; }
+.or { display: flex; align-items: center; gap: 10px; color: var(--muted); font-size: 13px; font-weight: 600; }
+.or::before, .or::after { content: ""; flex: 1; height: 1px; background: var(--line); }
+.home.invited #homeForm { order: -1; }
+.home.invited #createCard { order: 1; }
+.join-row { display: grid; grid-template-columns: 1fr auto; gap: 8px; }
+.code-input { text-transform: uppercase; letter-spacing: .3em; font-family: var(--font-display); text-align: center; }
+.code-input::placeholder { letter-spacing: .05em; font-family: var(--font-body); }
+.join-row .btn { width: auto; padding-inline: 22px; }
+.panel-card { background: var(--tray); border: 1px solid var(--line); border-radius: 18px; padding: 16px; display: flex; flex-direction: column; gap: 12px; }
+
+/* ---------- lobby ---------- */
+.lobby-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex: none; }
+.room-code { font-family: var(--font-display); font-size: 40px; line-height: 1; letter-spacing: .12em; }
+.lobby-body { flex: 1 1 auto; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 14px; margin-inline: -4px; padding-inline: 4px; }
+.section-title { display: flex; justify-content: space-between; align-items: baseline; font-weight: 700; }
+.section-title span:last-child { color: var(--muted); font-variant-numeric: tabular-nums; font-weight: 600; }
+.players { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.players li {
+  display: flex; align-items: center; gap: 10px; padding: 8px 10px; border-radius: 12px;
+  background: var(--tray); border: 1px solid var(--line); min-height: 52px;
+}
+.players .nm { flex: 1 1 auto; min-width: 0; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.players .nm small { font-weight: 400; color: var(--muted); }
+.tagp { flex: none; font-size: 12px; font-weight: 700; padding: 4px 8px; border-radius: 999px; background: var(--well); color: var(--muted); }
+.tagp.host { background: var(--marker); color: var(--marker-ink); }
+.tagp.ok { background: var(--mint); color: var(--ok); }
+.tagp.off { color: var(--alarm-ink); background: var(--blush); }
+.kick { flex: none; border: none; background: none; color: var(--muted); font-size: 13px; font-weight: 700; padding: 8px 4px; text-decoration: underline; text-underline-offset: 3px; }
+.settings { display: flex; flex-direction: column; gap: 10px; }
+.setting { display: flex; flex-direction: column; gap: 6px; }
+.chips { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; }
+.chips button {
+  border: 1px solid var(--line); background: var(--tray); border-radius: 10px; padding: 10px 4px; min-height: 44px;
+  font-weight: 700; font-variant-numeric: tabular-nums;
+}
+.chips button[aria-pressed="true"] { background: var(--lilac); color: var(--ink); border-color: transparent; }
+.chips button:disabled { cursor: default; }
+.chips button:disabled:not([aria-pressed="true"]) { opacity: .5; }
+.foot { flex: none; display: flex; flex-direction: column; gap: 8px; }
+.hint { margin: 0; color: var(--muted); text-align: center; font-size: 14px; text-wrap: balance; }
+
+/* ---------- draw ---------- */
+#s-draw, #s-draw * { touch-action: none; }
+.stage { flex: 1 1 0; min-height: 0; display: flex; align-items: center; justify-content: center; }
+.sheet { display: block; background: var(--paper); border-radius: 6px; box-shadow: var(--shadow); }
+#pad { touch-action: none; cursor: crosshair; }
+.tray {
+  flex: none; background: var(--tray); border: 1px solid var(--line); border-radius: 18px;
+  padding: 10px; display: flex; flex-direction: column; gap: 10px;
+}
+.tools { display: flex; align-items: center; justify-content: space-between; gap: 6px; }
+.group { display: flex; gap: 2px; background: var(--well); border-radius: 12px; padding: 3px; }
+.tool { width: clamp(34px, 10vw, 44px); height: 40px; border: none; border-radius: 9px; background: transparent; display: grid; place-items: center; }
+.tool svg { width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.tool[aria-pressed="true"] { background: var(--tray); box-shadow: 0 1px 3px rgba(80, 60, 140, .22); }
+.tool:disabled { opacity: .35; cursor: default; }
+.dot { display: block; border-radius: 50%; background: var(--cur, var(--ink)); box-shadow: inset 0 0 0 1px var(--line); }
+.dot.s { width: 6px; height: 6px; } .dot.m { width: 12px; height: 12px; } .dot.l { width: 20px; height: 20px; }
+.rubbing .dot { background: transparent; box-shadow: inset 0 0 0 2px var(--muted); }
+.undo { width: clamp(40px, 12vw, 52px); }
+.filling #sizes { opacity: .4; }
+.swatches { display: grid; grid-template-columns: repeat(8, 1fr); gap: 7px; }
+.sw { aspect-ratio: 1; max-width: 100%; width: 100%; border: none; border-radius: 10px; padding: 0; box-shadow: inset 0 0 0 1px var(--edge); }
+.sw[aria-checked="true"] { box-shadow: inset 0 0 0 1px var(--edge), 0 0 0 2px var(--tray), 0 0 0 4px var(--ink); }
+.rubbing .sw[aria-checked="true"] { box-shadow: inset 0 0 0 1px var(--edge), 0 0 0 2px var(--tray), 0 0 0 4px var(--muted); }
+
+/* ---------- write / describe ---------- */
+.write-stage { flex: 1 1 0; min-height: 0; display: flex; align-items: center; justify-content: center; }
+.write-note {
+  max-width: 34ch; text-align: center; color: var(--muted); font-size: 16px; text-wrap: balance;
+  display: flex; flex-direction: column; align-items: center; gap: 12px;
+}
+.write-note svg { width: 120px; height: 90px; fill: none; stroke: var(--ink); stroke-width: 3; stroke-linecap: round; stroke-linejoin: round; opacity: .8; }
+.write-box { flex: none; background: var(--tray); border: 1px solid var(--line); border-radius: 18px; padding: 10px; display: flex; flex-direction: column; gap: 8px; }
+.textarea {
+  width: 100%; resize: none; border: 1px solid var(--line); border-radius: 12px; background: var(--paper); color: var(--ink);
+  font-family: var(--font-display); font-size: 20px; line-height: 1.2; padding: 12px 14px; min-height: 76px;
+}
+.textarea::placeholder { color: #A39BB8; font-family: var(--font-body); font-size: 17px; }
+.write-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-height: 36px; }
+.count { color: var(--muted); font-size: 13px; font-variant-numeric: tabular-nums; }
+
+/* ---------- wait ---------- */
+.wait-body { flex: 1 1 auto; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 14px; }
+.big-check { display: flex; align-items: center; gap: 14px; padding: 16px; border-radius: 18px; background: var(--tray); border: 1px solid var(--line); }
+.big-check svg { flex: none; width: 46px; height: 46px; }
+.big-check strong { display: block; font-family: var(--font-display); font-weight: 400; font-size: 22px; line-height: 1.1; }
+.big-check span { color: var(--muted); }
+.meter { height: 8px; border-radius: 999px; background: var(--well); overflow: hidden; }
+.meter i { display: block; height: 100%; background: #7FD8B0; border-radius: inherit; transition: width .3s ease; }
+
+/* ---------- reveal ---------- */
+.feed { flex: 1 1 auto; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 14px; padding: 4px 2px 12px; scroll-behavior: smooth; }
+.entry { display: flex; flex-direction: column; gap: 6px; animation: appear .35s ease-out; }
+@keyframes appear { from { opacity: 0; transform: translateY(10px); } }
+.who { display: flex; align-items: center; gap: 8px; font-size: 14px; color: var(--muted); }
+.who b { color: var(--ink); }
+.said {
+  margin: 0; align-self: flex-start; max-width: 100%; background: var(--paper); color: var(--ink); border-radius: 4px 18px 18px 18px;
+  padding: 12px 16px; font-family: var(--font-display); font-size: 21px; line-height: 1.2; box-shadow: var(--shadow); overflow-wrap: anywhere;
+}
+.said.empty, .blank { font-family: var(--font-body); font-style: italic; color: var(--muted); font-size: 15px; }
+.entry canvas { align-self: center; }
+.blank { padding: 20px; text-align: center; background: var(--paper); border-radius: 6px; }
+.albums { flex: none; display: flex; gap: 6px; overflow-x: auto; padding-bottom: 2px; scrollbar-width: none; }
+.albums button {
+  flex: none; display: flex; align-items: center; gap: 6px; border: 1px solid var(--line); background: var(--tray);
+  border-radius: 999px; padding: 4px 12px 4px 4px; min-height: 36px; font-weight: 600; font-size: 14px;
+}
+.albums button[aria-pressed="true"] { background: var(--lilac); color: var(--ink); border-color: transparent; }
+.row2 { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+
+/* ---------- overlays ---------- */
+.banner {
+  position: absolute; z-index: 30; left: 50%; transform: translateX(-50%);
+  top: max(8px, env(safe-area-inset-top, 0px)); background: var(--alarm); color: var(--on-alarm);
+  font-weight: 700; font-size: 14px; padding: 8px 14px; border-radius: 999px; box-shadow: var(--shadow); white-space: nowrap;
+}
+.toast {
+  position: fixed; z-index: 40; left: 50%; transform: translateX(-50%); width: max-content; max-width: calc(100% - 32px);
+  bottom: calc(24px + env(safe-area-inset-bottom, 0px)); background: var(--ink); color: #FFFFFF;
+  padding: 12px 16px; border-radius: 14px; font-weight: 600; box-shadow: var(--shadow); text-align: center;
+  animation: appear .2s ease-out;
+}
+.scrim { position: fixed; inset: 0; z-index: 50; background: var(--scrim); display: flex; align-items: flex-end; justify-content: center; }
+.dialog {
+  width: 100%; max-width: 560px; background: var(--tray); border-radius: 22px 22px 0 0;
+  padding-top: 20px; padding-bottom: calc(18px + env(safe-area-inset-bottom, 0px));
+  padding-left: max(18px, env(safe-area-inset-left, 0px)); padding-right: max(18px, env(safe-area-inset-right, 0px));
+  display: flex; flex-direction: column; gap: 14px; animation: rise .26s ease-out;
+}
+@keyframes rise { from { transform: translateY(24px); opacity: .4; } }
+.dialog h2 { margin: 0; font-family: var(--font-display); font-weight: 400; font-size: 24px; line-height: 1.1; }
+.dialog p { margin: 0; color: var(--muted); }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation: none !important; transition: none !important; scroll-behavior: auto !important; }
+}
+</style>
+</head>
+<body>
+<div class="app" id="app">
+  <div class="banner" id="offline" role="status" hidden>Connessione persa, riprovo…</div>
+
+  <!-- loading -->
+  <section class="screen loading" id="s-loading">
+    <div class="spinner" aria-hidden="true"></div>
+    <p id="loadingText">Mi collego…</p>
+  </section>
+
+  <!-- home -->
+  <section class="screen home" id="s-home" hidden>
+    <div class="brand">
+      <div class="brand-wrap">
+        <h1 class="wordmark">Scarabokki
+          <svg viewBox="0 0 300 22" preserveAspectRatio="none" aria-hidden="true"><path d="M4 14 C 60 4, 110 20, 160 11 S 260 6, 296 12" fill="none" stroke="#FFC2D4" stroke-width="12" stroke-linecap="round"/></svg>
+        </h1>
+      </div>
+      <p class="tag">Il telefono senza fili, ma disegnato.</p>
+    </div>
+
+    <div class="name-field">
+      <label class="field-label" for="name">Il tuo nome</label>
+      <input class="input" id="name" name="name" maxlength="16" autocomplete="nickname" autocapitalize="words" enterkeyhint="done" placeholder="Come ti chiamano gli amici">
+    </div>
+
+    <button class="btn primary" id="resume" type="button" hidden>Torna alla partita</button>
+
+    <div class="choices">
+      <section class="choice" id="createCard" aria-labelledby="createTitle">
+        <div class="choice-head">
+          <span class="badge" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg></span>
+          <div>
+            <h2 id="createTitle">Crea una partita</h2>
+            <p>Diventi il capo stanza e mandi il link agli amici.</p>
+          </div>
+        </div>
+        <button class="btn primary" id="create" type="button">Crea una partita</button>
+      </section>
+
+      <div class="or" id="orSep">oppure</div>
+
+      <form class="choice" id="homeForm" novalidate aria-labelledby="joinTitle">
+        <div class="choice-head">
+          <span class="badge alt" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M14 4h4a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2h-4"/><path d="M4 12h11"/><path d="M11 8l4 4-4 4"/></svg></span>
+          <div>
+            <h2 id="joinTitle">Unisciti a una partita</h2>
+            <p id="joinText">Scrivi il codice di 4 lettere che ti hanno mandato.</p>
+          </div>
+        </div>
+        <div class="join-row">
+          <input class="input code-input" id="code" name="code" maxlength="4" autocomplete="off" autocapitalize="characters" spellcheck="false" enterkeyhint="go" placeholder="ABCD" aria-label="Codice partita">
+          <button class="btn" id="join" type="submit">Entra</button>
+        </div>
+      </form>
+    </div>
+  </section>
+
+  <!-- lobby -->
+  <section class="screen" id="s-lobby" hidden>
+    <header class="lobby-head">
+      <div>
+        <div class="eyebrow">Codice partita</div>
+        <div class="room-code" id="lobbyCode">····</div>
+      </div>
+      <button class="btn small primary" id="invite" type="button">Invita</button>
+    </header>
+    <div class="lobby-body">
+      <div class="section-title"><span>Giocatori</span><span id="count">0/20</span></div>
+      <ul class="players" id="lobbyPlayers"></ul>
+      <div class="settings" id="settings">
+        <div class="section-title"><span>Tempi</span><span id="settingsWho"></span></div>
+        <div class="setting">
+          <span class="eyebrow">Per disegnare</span>
+          <div class="chips" id="drawTimes" role="group" aria-label="Tempo per disegnare"></div>
+        </div>
+        <div class="setting">
+          <span class="eyebrow">Per scrivere</span>
+          <div class="chips" id="writeTimes" role="group" aria-label="Tempo per scrivere"></div>
+        </div>
+      </div>
+    </div>
+    <footer class="foot">
+      <p class="hint" id="lobbyHint"></p>
+      <button class="btn primary" id="start" type="button">Inizia la partita</button>
+      <button class="btn ghost" id="leave" type="button">Esci dalla stanza</button>
+    </footer>
+  </section>
+
+  <!-- write / describe -->
+  <section class="screen" id="s-write" hidden>
+    <header class="bar">
+      <div class="timer" role="timer" aria-label="Tempo rimasto">0:00</div>
+      <div class="prompt">
+        <div class="eyebrow" id="writeEyebrow">Turno 1</div>
+        <h2 class="title" id="writeTitle">Scrivi una frase</h2>
+      </div>
+      <span></span>
+    </header>
+    <div class="write-stage" id="writeStage">
+      <canvas class="sheet" id="seen" aria-label="Disegno da descrivere" hidden></canvas>
+      <div class="write-note" id="writeNote">
+        <svg viewBox="0 0 120 90" aria-hidden="true"><path d="M14 70 C 30 40, 44 76, 60 46 S 92 30, 106 20"/><path d="M96 14 l14 4 -6 13"/></svg>
+        <span id="writeNoteText">Qualcosa di divertente da far disegnare a chi viene dopo di te.</span>
+      </div>
+    </div>
+    <div class="write-box">
+      <textarea class="textarea" id="phrase" maxlength="80" rows="2" enterkeyhint="send" autocomplete="off" autocapitalize="sentences" placeholder="Scrivi qui…" aria-labelledby="writeTitle"></textarea>
+      <div class="write-row">
+        <button class="link" id="idea" type="button">Dammi un’idea</button>
+        <span class="count" id="phraseCount">0/80</span>
+      </div>
+      <button class="btn primary" id="sendText" type="button">Fatto</button>
+    </div>
+  </section>
+
+  <!-- draw -->
+  <section class="screen" id="s-draw" hidden>
+    <header class="bar">
+      <div class="timer" role="timer" aria-label="Tempo rimasto">0:00</div>
+      <div class="prompt">
+        <div class="eyebrow" id="drawEyebrow">Disegna</div>
+        <h2 class="title" id="drawPrompt"></h2>
+      </div>
+      <button class="done-btn" id="sendDraw" type="button">Fatto</button>
+    </header>
+    <main class="stage" id="stage"><canvas class="sheet" id="pad" aria-label="Foglio da disegno"></canvas></main>
+    <section class="tray" id="tray" aria-label="Strumenti">
+      <div class="tools">
+        <div class="group" role="group" aria-label="Strumento">
+          <button class="tool" id="pen" type="button" aria-pressed="true" aria-label="Pennarello">
+            <svg viewBox="0 0 24 24"><path d="M4 20l1.2-4.6L15.8 4.8a2 2 0 0 1 2.8 0l.6.6a2 2 0 0 1 0 2.8L8.6 18.8z"/><path d="M14 6.6l3.4 3.4"/></svg>
+          </button>
+          <button class="tool" id="rub" type="button" aria-pressed="false" aria-label="Gomma">
+            <svg viewBox="0 0 24 24"><path d="M9 20h11"/><path d="M4.8 14.6l8.6-8.6a2 2 0 0 1 2.8 0l3 3a2 2 0 0 1 0 2.8L12 19.2H9.4z"/><path d="M9 10.4l5 5"/></svg>
+          </button>
+          <button class="tool" id="fill" type="button" aria-pressed="false" aria-label="Secchiello">
+            <svg viewBox="0 0 24 24"><path d="M18.5 11.5L11 4 3.6 11.4a2 2 0 0 0 0 2.8l4.7 4.7a2 2 0 0 0 2.8 0z"/><path d="M6 3l4.2 4.2"/><path d="M3 12.8h15.5"/><path d="M21.6 19.4a1.6 1.6 0 1 1-3.2 0c0-1.3 1.6-2.3 1.6-3.6 0 1.3 1.6 2.3 1.6 3.6z"/></svg>
+          </button>
+        </div>
+        <div class="group" role="group" aria-label="Spessore" id="sizes">
+          <button class="tool" type="button" data-size="0" aria-pressed="false" aria-label="Sottile"><span class="dot s"></span></button>
+          <button class="tool" type="button" data-size="1" aria-pressed="true" aria-label="Medio"><span class="dot m"></span></button>
+          <button class="tool" type="button" data-size="2" aria-pressed="false" aria-label="Grosso"><span class="dot l"></span></button>
+        </div>
+        <div class="group">
+          <button class="tool undo" id="undo" type="button" aria-label="Annulla (tieni premuto per annullare di più)" disabled>
+            <svg viewBox="0 0 24 24"><path d="M9 14L4 9l5-5"/><path d="M4 9h10.5a5.5 5.5 0 0 1 0 11H11"/></svg>
+          </button>
+        </div>
+      </div>
+      <div class="swatches" id="swatches" role="radiogroup" aria-label="Colori"></div>
+    </section>
+  </section>
+
+  <!-- wait -->
+  <section class="screen" id="s-wait" hidden>
+    <header class="bar">
+      <div class="timer" role="timer" aria-label="Tempo rimasto">0:00</div>
+      <div class="prompt">
+        <div class="eyebrow" id="waitEyebrow">Turno 1</div>
+        <h2 class="title">In attesa degli altri</h2>
+      </div>
+      <span></span>
+    </header>
+    <div class="wait-body">
+      <div class="big-check">
+        <svg viewBox="0 0 46 46" aria-hidden="true"><circle cx="23" cy="23" r="21" fill="var(--mint)"/><path d="M13 24l7 7 13-15" fill="none" stroke="var(--ok)" stroke-width="4.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        <div><strong>Consegnato</strong><span id="waitCount">1 di 4 hanno finito</span></div>
+      </div>
+      <div class="meter" aria-hidden="true"><i id="waitMeter" style="width:0%"></i></div>
+      <ul class="players" id="waitPlayers"></ul>
+    </div>
+    <footer class="foot">
+      <p class="hint" id="waitHint">Il turno passa appena finiscono tutti o allo scadere del tempo.</p>
+      <button class="btn" id="edit" type="button">Modifica</button>
+    </footer>
+  </section>
+
+  <!-- reveal -->
+  <section class="screen" id="s-reveal" hidden>
+    <header class="bar" style="grid-template-columns: 1fr auto">
+      <div class="prompt">
+        <div class="eyebrow" id="albumEyebrow">Album 1 di 4</div>
+        <h2 class="title" id="albumTitle">L’album di …</h2>
+      </div>
+      <button class="btn small" id="share" type="button" hidden>Salva</button>
+    </header>
+    <div class="albums" id="albums" hidden></div>
+    <div class="feed" id="feed" aria-live="polite"></div>
+    <footer class="foot">
+      <p class="hint" id="revealHint"></p>
+      <button class="btn primary" id="next" type="button" hidden>Avanti</button>
+      <button class="btn primary" id="again" type="button" hidden>Nuova partita</button>
+      <button class="btn ghost" id="exitReveal" type="button" hidden>Esci dalla stanza</button>
+    </footer>
+  </section>
+
+  <!-- claim a seat in a game in progress -->
+  <section class="screen" id="s-claim" hidden>
+    <header>
+      <div class="eyebrow" id="claimCode">Partita ABCD</div>
+      <h2 class="title" style="font-size:26px">La partita è già cominciata</h2>
+    </header>
+    <div class="lobby-body">
+      <p class="hint" style="text-align:left" id="claimText">Se eri già in partita e hai cambiato telefono o browser, tocca il tuo nome per riprendere il posto.</p>
+      <ul class="players" id="claimList"></ul>
+    </div>
+    <footer class="foot">
+      <p class="hint">Altrimenti resta qui: entrerai da solo nella prossima partita.</p>
+      <button class="btn ghost" id="claimBack" type="button">Torna all’inizio</button>
+    </footer>
+  </section>
+
+  <!-- member that missed the start -->
+  <section class="screen" id="s-spectate" hidden>
+    <div class="lobby-body" style="justify-content:center; text-align:center; align-items:center">
+      <h2 class="title" style="font-size:26px">Partita in corso</h2>
+      <p class="hint">È cominciata mentre non eri collegato. Resta qui: entri in automatico nella prossima.</p>
+    </div>
+    <footer class="foot"><button class="btn ghost" id="specLeave" type="button">Esci dalla stanza</button></footer>
+  </section>
+</div>
+
+<div class="toast" id="toast" role="status" hidden></div>
+<div class="scrim" id="ask" hidden>
+  <div class="dialog" role="dialog" aria-modal="true" aria-labelledby="askTitle">
+    <h2 id="askTitle"></h2>
+    <p id="askText"></p>
+    <div class="row2">
+      <button class="btn" id="askNo" type="button">Annulla</button>
+      <button class="btn primary" id="askYes" type="button">Conferma</button>
+    </div>
+  </div>
+</div>
+
+<script type="module" src="app.js"></script>
+</body>
+</html>
