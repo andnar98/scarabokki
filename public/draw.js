@@ -44,92 +44,106 @@ export function strokesFrom(obj) {
 export const strokeKey = i => 's' + String(i).padStart(4, '0');
 
 // ---------- bucket fill ----------
-// A fill is computed on a reference raster at half resolution (1000 × 1334 px), the same
-// on every device, and kept as a cropped colour mask that is scaled onto any canvas.
+// Fills must come out identical on every phone, so they are not computed from the canvas
+// (browsers anti-alias differently). Each drawing is rasterised by this code into a small
+// colour-index grid (1000 × 1334 cells), the flood fill runs on that grid, and the result is
+// kept as a vector path that paints crisply at any size.
 const RS = 0.5, RW = Math.round(UNIT * RS), RH = Math.round(HEIGHT * RS);
-const TOL = 40;                 // how different a pixel may be from the tapped one and still fill
-const MASKS = new WeakMap();    // fill op -> { cv, x, y, w, h } in reference pixels
-const NONE = { cv: null };
-let refCv = null;
-function refCtx() {
-  if (!refCv) { refCv = document.createElement('canvas'); refCv.width = RW; refCv.height = RH; }
-  const c = refCv.getContext('2d', { willReadFrequently: true });
-  c.setTransform(1, 0, 0, 1, 0, 0);
-  c.fillStyle = PAPER; c.fillRect(0, 0, RW, RH);
-  c.setTransform(RS, 0, 0, RS, 0, 0);
-  return c;
+const FILLS = new WeakMap();    // fill op -> Path2D (drawing units) or NONE
+const NONE = {};
+const palette = new Map();      // colour -> grid value (0 is paper)
+let grid = null, gridOps = [];  // the grid and the operations already painted on it
+function colorIndex(hex) {
+  hex = hex.toUpperCase();
+  if (hex === PAPER) return 0;
+  let i = palette.get(hex);
+  if (!i) { i = Math.min(255, palette.size + 1); palette.set(hex, i); }
+  return i;
 }
-function rgb(hex) { const n = parseInt(hex.slice(1), 16); return [(n >> 16) & 255, (n >> 8) & 255, n & 255]; }
-function computeMask(c, op) {
-  const sx = Math.min(RW - 1, Math.max(0, Math.round(op.p[0] * RS)));
-  const sy = Math.min(RH - 1, Math.max(0, Math.round(op.p[1] * RS)));
-  const img = c.getImageData(0, 0, RW, RH);
-  const px = new Uint32Array(img.data.buffer, img.data.byteOffset, RW * RH);
-  const seed = px[sy * RW + sx];
-  const sr = seed & 255, sg = (seed >>> 8) & 255, sb = (seed >>> 16) & 255;
-  const [fr, fg, fb] = rgb(op.c);
-  if (Math.abs(sr - fr) <= 6 && Math.abs(sg - fg) <= 6 && Math.abs(sb - fb) <= 6) return null;   // already that colour
-  const mask = new Uint8Array(RW * RH);
-  const ok = i => {
-    if (mask[i]) return false;
-    const v = px[i];
-    return Math.abs((v & 255) - sr) <= TOL && Math.abs(((v >>> 8) & 255) - sg) <= TOL && Math.abs(((v >>> 16) & 255) - sb) <= TOL;
-  };
-  let minx = sx, maxx = sx, miny = sy, maxy = sy;
-  const stack = [sx, sy];
+// Paints a thick line with round ends: every cell whose centre is within r of the segment.
+function capsule(x0, y0, x1, y1, r, v) {
+  const xa = Math.max(0, Math.floor(Math.min(x0, x1) - r)), xb = Math.min(RW - 1, Math.ceil(Math.max(x0, x1) + r));
+  const ya = Math.max(0, Math.floor(Math.min(y0, y1) - r)), yb = Math.min(RH - 1, Math.ceil(Math.max(y0, y1) + r));
+  const dx = x1 - x0, dy = y1 - y0, len2 = dx * dx + dy * dy, r2 = r * r;
+  for (let y = ya; y <= yb; y++) {
+    const py = y + 0.5 - y0, row = y * RW;
+    for (let x = xa; x <= xb; x++) {
+      const px = x + 0.5 - x0;
+      let t = len2 ? (px * dx + py * dy) / len2 : 0;
+      t = t < 0 ? 0 : t > 1 ? 1 : t;
+      const ex = px - t * dx, ey = py - t * dy;
+      if (ex * ex + ey * ey <= r2) grid[row + x] = v;
+    }
+  }
+}
+// Same geometry as drawStroke: a dot, curves through the midpoints, a straight tail.
+function rasterStroke(s) {
+  const p = s.p, n = p.length / 2, v = s.e ? 0 : colorIndex(s.c), r = Math.max(0.75, s.w * RS / 2);
+  const X = i => p[i * 2] * RS, Y = i => p[i * 2 + 1] * RS;
+  capsule(X(0), Y(0), X(0), Y(0), r, v);
+  for (let i = 1; i < n; i++) {
+    const sx = i === 1 ? X(0) : (X(i - 2) + X(i - 1)) / 2, sy = i === 1 ? Y(0) : (Y(i - 2) + Y(i - 1)) / 2;
+    const cx = X(i - 1), cy = Y(i - 1), ex = (X(i - 1) + X(i)) / 2, ey = (Y(i - 1) + Y(i)) / 2;
+    const steps = Math.min(16, Math.max(1, Math.ceil((Math.hypot(cx - sx, cy - sy) + Math.hypot(ex - cx, ey - cy)) / 2)));
+    let ax = sx, ay = sy;
+    for (let k = 1; k <= steps; k++) {
+      const t = k / steps, u = 1 - t;
+      const bx = u * u * sx + 2 * u * t * cx + t * t * ex, by = u * u * sy + 2 * u * t * cy + t * t * ey;
+      capsule(ax, ay, bx, by, r, v);
+      ax = bx; ay = by;
+    }
+  }
+  if (n >= 2) capsule((X(n - 2) + X(n - 1)) / 2, (Y(n - 2) + Y(n - 1)) / 2, X(n - 1), Y(n - 1), r, v);
+}
+// Flood fill on the grid from the tapped cell. Returns the filled area as a path, or null
+// when the area already has that colour.
+function floodFill(op) {
+  const sx = Math.min(RW - 1, Math.max(0, Math.floor(op.p[0] * RS)));
+  const sy = Math.min(RH - 1, Math.max(0, Math.floor(op.p[1] * RS)));
+  const from = grid[sy * RW + sx], to = colorIndex(op.c);
+  if (from === to) return null;
+  const path = new Path2D(), stack = [sx, sy];
   while (stack.length) {
-    const y = stack.pop(); let x = stack.pop(); let i = y * RW + x;
-    if (!ok(i)) continue;
-    while (x > 0 && ok(i - 1)) { x--; i--; }
-    let up = false, down = false;
-    if (x < minx) minx = x; if (y < miny) miny = y; if (y > maxy) maxy = y;
-    while (x < RW && ok(i)) {
-      mask[i] = 1;
-      if (y > 0) { if (ok(i - RW)) { if (!up) { stack.push(x, y - 1); up = true; } } else up = false; }
-      if (y < RH - 1) { if (ok(i + RW)) { if (!down) { stack.push(x, y + 1); down = true; } } else down = false; }
+    const y = stack.pop(); let x = stack.pop(), i = y * RW + x;
+    if (grid[i] !== from) continue;
+    while (x > 0 && grid[i - 1] === from) { x--; i--; }
+    const x0 = x; let up = false, down = false;
+    while (x < RW && grid[i] === from) {
+      grid[i] = to;
+      if (y > 0) { if (grid[i - RW] === from) { if (!up) { stack.push(x, y - 1); up = true; } } else up = false; }
+      if (y < RH - 1) { if (grid[i + RW] === from) { if (!down) { stack.push(x, y + 1); down = true; } } else down = false; }
       x++; i++;
     }
-    if (x - 1 > maxx) maxx = x - 1;
+    // half a cell wider on every side, so the colour tucks under the soft edge of the lines around it
+    path.rect(x0 / RS - 1, y / RS - 1, (x - x0) / RS + 2, 1 / RS + 2);
   }
-  // grow the area by one pixel so it tucks under the soft edge of the lines around it
-  const x0 = Math.max(0, minx - 1), y0 = Math.max(0, miny - 1), x1 = Math.min(RW - 1, maxx + 1), y1 = Math.min(RH - 1, maxy + 1);
-  const bw = x1 - x0 + 1, bh = y1 - y0 + 1;
-  const cv = document.createElement('canvas'); cv.width = bw; cv.height = bh;
-  const mc = cv.getContext('2d');
-  const out = mc.createImageData(bw, bh);
-  const o = new Uint32Array(out.data.buffer);
-  const col = ((255 << 24) | (fb << 16) | (fg << 8) | fr) >>> 0;
-  for (let y = y0; y <= y1; y++) {
-    for (let x = x0; x <= x1; x++) {
-      const i = y * RW + x;
-      if (mask[i] || (x > 0 && mask[i - 1]) || (x < RW - 1 && mask[i + 1]) || (y > 0 && mask[i - RW]) || (y < RH - 1 && mask[i + RW])) {
-        o[(y - y0) * bw + (x - x0)] = col;
-      }
-    }
-  }
-  mc.putImageData(out, 0, 0);
-  return { cv, x: x0, y: y0, w: bw, h: bh };
+  return path;
 }
-// Makes sure every fill in the list has its mask (masks of earlier fills are reused).
+// Brings the grid up to date with the first `count` operations of a drawing.
+function syncGrid(ops, count) {
+  if (!grid) grid = new Uint8Array(RW * RH);
+  let same = 0;
+  while (same < gridOps.length && same < count && gridOps[same] === ops[same]) same++;
+  if (same < gridOps.length) { grid.fill(0); gridOps = []; same = 0; }
+  for (let i = same; i < count; i++) {
+    const s = ops[i];
+    if (s.f) { const path = floodFill(s); if (!FILLS.has(s)) FILLS.set(s, path || NONE); }
+    else rasterStroke(s);
+    gridOps.push(s);
+  }
+}
+// Makes sure every fill in the list has its path (paths of earlier fills are reused).
 export function ensureMasks(ops) {
   let last = -1;
-  for (let i = 0; i < ops.length; i++) if (ops[i].f && !MASKS.has(ops[i])) last = i;
-  if (last < 0) return;
-  const c = refCtx();
-  for (let i = 0; i <= last; i++) {
-    const s = ops[i];
-    if (s.f && !MASKS.has(s)) MASKS.set(s, computeMask(c, s) || NONE);
-    drawStroke(c, s);
-  }
+  for (let i = 0; i < ops.length; i++) if (ops[i].f && !FILLS.has(ops[i])) last = i;
+  if (last >= 0) syncGrid(ops, last + 1);
 }
 // Computes the fill for a new tap on top of the given drawing. Returns false if nothing would change.
 function prepareFill(ops, op) {
-  ensureMasks(ops);
-  const c = refCtx();
-  for (const s of ops) drawStroke(c, s);
-  const m = computeMask(c, op);
-  if (!m) return false;
-  MASKS.set(op, m);
+  syncGrid(ops, ops.length);
+  const path = floodFill(op);
+  if (!path) return false;
+  FILLS.set(op, path); gridOps.push(op);
   return true;
 }
 
@@ -155,10 +169,9 @@ function tail(c, s) {
   c.beginPath(); c.moveTo((p[a] + p[b]) / 2, (p[a + 1] + p[b + 1]) / 2); c.lineTo(p[b], p[b + 1]); c.stroke();
 }
 function drawFill(c, s) {
-  const m = MASKS.get(s);
-  if (!m || !m.cv) return;
-  c.imageSmoothingEnabled = true;
-  c.drawImage(m.cv, m.x / RS, m.y / RS, m.w / RS, m.h / RS);
+  const path = FILLS.get(s);
+  if (!path || path === NONE) return;
+  c.fillStyle = s.c; c.fill(path);
 }
 function drawStroke(c, s) {
   if (s.f) { drawFill(c, s); return; }
@@ -184,14 +197,16 @@ function paint(c, k, strokes) {
   c.setTransform(k, 0, 0, k, 0, 0);
   for (const s of strokes) drawStroke(c, s);
 }
-export function sizeCanvas(canvas, cssWidth) {
-  const dpr = Math.min(window.devicePixelRatio || 1, 3);
+export function sizeCanvas(canvas, cssWidth, maxDpr = 3) {
+  const dpr = Math.min(window.devicePixelRatio || 1, maxDpr);
   const w = Math.max(40, Math.floor(cssWidth));
   const h = Math.floor(w * RATIO);
   canvas.style.width = w + 'px'; canvas.style.height = h + 'px';
   canvas.width = Math.round(w * dpr); canvas.height = Math.round(h * dpr);
   return canvas.width / UNIT;
 }
+// Frees a canvas's memory right away (phones keep it around otherwise).
+export function release(canvas) { canvas.width = 0; canvas.height = 0; }
 export function render(canvas, strokes) { paint(canvas.getContext('2d'), canvas.width / UNIT, strokes); }
 
 const reduced = () => window.matchMedia('(prefers-reduced-motion: reduce)').matches;
@@ -239,6 +254,7 @@ export class Pad {
     this.z = 1; this.tx = 0; this.ty = 0;          // view: zoom and offset in canvas pixels
     this.pts = new Map();                           // fingers on the sheet, in canvas pixels
     this.pinch = null; this.gesture = false; this.tap = null; this.raf = 0;
+    this.cost = 0; this.snap = null; this.snapCv = null;
     new ResizeObserver(() => this.fit()).observe(stage);
     canvas.addEventListener('pointerdown', e => this.down(e));
     canvas.addEventListener('pointermove', e => this.move(e));
@@ -280,16 +296,32 @@ export class Pad {
     this.setView(z, p.x - ux * z, p.y - uy * z);
   }
   redraw() {
-    const c = this.ctx;
+    const c = this.ctx, W = this.cv.width, H = this.cv.height;
+    if (this.gesture && this.snap) {
+      // a heavy drawing follows the fingers as a picture; it is redrawn sharp when they lift
+      c.setTransform(1, 0, 0, 1, 0, 0);
+      c.drawImage(this.snap, this.tx, this.ty, W * this.z, H * this.z);
+      return;
+    }
+    const t0 = performance.now();
     ensureMasks(this.strokes);
     c.setTransform(1, 0, 0, 1, 0, 0);
-    c.fillStyle = PAPER; c.fillRect(0, 0, this.cv.width, this.cv.height);
+    c.fillStyle = PAPER; c.fillRect(0, 0, W, H);
     this.view();
     for (const s of this.strokes) drawStroke(c, s);
     if (this.cur) drawStroke(c, this.cur);
+    this.cost = performance.now() - t0;
+  }
+  takeSnap() {
+    this.snap = null;
+    if (this.cost < 7) return;                    // light drawing: redrawing every frame is smooth enough
+    const cv = this.snapCv || (this.snapCv = document.createElement('canvas'));
+    cv.width = this.cv.width; cv.height = this.cv.height;
+    paint(cv.getContext('2d'), this.k, this.strokes);
+    this.snap = cv;
   }
   load(strokes) {
-    this.cur = null; this.curId = null; this.pts.clear(); this.pinch = null; this.gesture = false; this.tap = null;
+    this.cur = null; this.curId = null; this.pts.clear(); this.pinch = null; this.gesture = false; this.tap = null; this.snap = null;
     this.strokes = strokes.slice();
     this.resetView();
   }
@@ -323,7 +355,9 @@ export class Pad {
       if (performance.now() - this.startT < 400 || this.cur.p.length <= 12) { this.cur = null; this.redraw(); }
       else this.finish();
     }
-    this.curId = null; this.tap = null; this.gesture = true;
+    this.curId = null; this.tap = null;
+    if (!this.gesture) this.takeSnap();
+    this.gesture = true;
     const [a, b] = [...this.pts.values()];
     this.pinch = { d0: Math.max(1, dist(a, b)), m0: mid(a, b), z0: this.z, tx0: this.tx, ty0: this.ty };
   }
@@ -360,7 +394,10 @@ export class Pad {
     this.pts.delete(e.pointerId);
     if (this.gesture) {
       if (this.pts.size < 2) this.pinch = null;
-      if (this.pts.size === 0) { this.gesture = false; if (this.z < 1.06) this.resetView(); }
+      if (this.pts.size === 0) {
+        this.gesture = false; this.snap = null;
+        if (this.z < 1.06) this.resetView(); else this.redraw();
+      }
       return;
     }
     if (this.tap && this.tap.id === e.pointerId) {

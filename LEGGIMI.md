@@ -16,6 +16,11 @@ npx firebase-tools deploy --only database
 
 ## Cosa c'è dentro
 
-- `public/` il sito: `index.html` (schermate e stile), `app.js` (regole del gioco), `draw.js` (foglio da disegno), `net.js` (collegamento a Firebase)
+- `public/index.html` schermate e stile
+- `public/app.js` regole del gioco: stanze, turni, rivelazione
+- `public/draw.js` foglio da disegno: tratti, secchiello, zoom
+- `public/ui.js` pezzi d'interfaccia condivisi: schermate, messaggi, conferme, vibrazione
+- `public/album.js` immagine dell'album da salvare
+- `public/net.js` collegamento a Firebase
 - `database.rules.json` chi può leggere e scrivere cosa nel database
-- `firebase.json`, `.firebaserc` configurazione per la pubblicazione
+- `firebase.json`, `.firebaserc`, `.github/workflows/` configurazione per la pubblicazione

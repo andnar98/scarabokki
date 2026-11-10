@@ -1,5 +1,7 @@
 import * as net from './net.js';
-import { Pad, COLORS, RATIO, UNIT, HEIGHT, render, replay, sizeCanvas, strokesFrom, encode, strokeKey, paintInto } from './draw.js';
+import { Pad, COLORS, RATIO, render, replay, sizeCanvas, release, strokesFrom, encode, strokeKey } from './draw.js';
+import { $, screen, showScreen, toast, ask, haptic, syncRows } from './ui.js';
+import { albumBlob } from './album.js';
 
 // ---------------------------------------------------------------------------
 // Settings
@@ -8,6 +10,7 @@ const T = globalThis.__SCARA_TEST || {};
 const CFG = {
   maxPlayers: 20, minPlayers: 2, nameMax: 16, textMax: 80,
   grace: 3000,                     // after the deadline, wait this long for last saves before moving on
+  intro: 1200,                     // every round starts with a short title card; the clock allows for it
   gone: T.gone ?? 30000,           // a player offline this long no longer holds up the round
   hostGone: T.hostGone ?? 30000,   // the host offline this long hands control to the next player
   drawTimes: [60, 90, 120, 180],
@@ -36,13 +39,12 @@ const IDEAS = [
 // ---------------------------------------------------------------------------
 // State and small helpers
 // ---------------------------------------------------------------------------
-const $ = id => document.getElementById(id);
 const S = {
   uid: null, code: null, seat: null, attachedAt: 0,
   meta: null, players: {}, presence: {}, presenceLoaded: false, done: {},
   subs: [], doneSub: null, doneKey: null, tick: 0,
   roundKey: null, roundToken: 0, task: null, submitted: false, autoSent: null,
-  advancing: null, hosting: false, connected: true, screen: 'loading',
+  advancing: null, hosting: false, connected: true,
   rv: { key: null, chain: -1, shown: 0, browse: null, cache: {}, stops: [] },
   claimSubs: []
 };
@@ -80,31 +82,31 @@ function avatar(seat, small) {
 }
 function tag(text, cls) { const t = document.createElement('span'); t.className = 'tagp' + (cls ? ' ' + cls : ''); t.textContent = text; return t; }
 
-let toastT = 0;
-function toast(msg, ms = 3500) {
-  const t = $('toast'); t.textContent = msg; t.hidden = false;
-  clearTimeout(toastT); toastT = setTimeout(() => { t.hidden = true; }, ms);
-}
-function ask(title, text, yes = 'Conferma') {
-  return new Promise(resolve => {
-    $('askTitle').textContent = title; $('askText').textContent = text; $('askYes').textContent = yes;
-    const box = $('ask'); box.hidden = false;
-    const done = v => { box.hidden = true; $('askYes').onclick = $('askNo').onclick = box.onclick = null; resolve(v); };
-    $('askYes').onclick = () => done(true);
-    $('askNo').onclick = () => done(false);
-    box.onclick = e => { if (e.target === box) done(false); };
-    $('askYes').focus({ preventScroll: true });
-  });
-}
-
-const SCREENS = ['loading', 'home', 'lobby', 'write', 'draw', 'wait', 'reveal', 'claim', 'spectate'];
 function show(name) {
-  if (S.screen === name) return;
-  for (const s of SCREENS) $('s-' + s).hidden = s !== name;
-  S.screen = name;
+  if (!showScreen(name)) return;
   if (name === 'draw') pad.fit();
 }
-function loading(text) { $('loadingText').textContent = text; show('loading'); }
+function loading(text) {
+  $('intro').hidden = true; $('spinner').hidden = false; $('loadingText').hidden = false;
+  $('loadingText').textContent = text; show('loading');
+}
+const ICONS = {
+  write: '<svg viewBox="0 0 48 48"><path d="M8 40l3-11L31 9a4 4 0 0 1 6 0l2 2a4 4 0 0 1 0 6L19 37z"/><path d="M27 13l8 8"/></svg>',
+  draw: '<svg viewBox="0 0 48 48"><path d="M40 6c-9 4-17 12-22 22l6 6c10-5 18-13 22-22z"/><path d="M18 28c-6 0-9 4-9 8 0 3-2 5-4 6 6 2 16 1 19-8"/></svg>',
+  describe: '<svg viewBox="0 0 48 48"><path d="M4 24s7-13 20-13 20 13 20 13-7 13-20 13S4 24 4 24z"/><circle cx="24" cy="24" r="6"/></svg>'
+};
+// Title card between rounds: says what is coming while the round loads.
+function intro(r, n) {
+  const kind = r === 0 ? 'write' : r % 2 ? 'draw' : 'describe';
+  $('spinner').hidden = true; $('loadingText').hidden = true;
+  $('introIcon').innerHTML = ICONS[kind];
+  $('introEyebrow').textContent = `Turno ${r + 1} di ${n}`;
+  $('introTitle').textContent = kind === 'write' ? 'Scrivi una frase' : kind === 'draw' ? 'Disegna' : 'Indovina il disegno';
+  $('intro').hidden = false; show('loading');
+}
+const wait = ms => new Promise(res => setTimeout(res, ms));
+const verbOf = k => (k % 2 ? ' ha disegnato' : k === 0 ? ' ha scritto' : ' ha visto');
+const textOf = e => (e.v && typeof e.v.t === 'string' ? e.v.t.trim() : '');
 
 // ---------------------------------------------------------------------------
 // Device: viewport, wake lock, connection banner
@@ -129,7 +131,7 @@ function onConnection(ok) {
   S.connected = ok;
   clearTimeout(offT);
   if (ok) { $('offline').hidden = true; if (S.seat) markPresent(); }
-  else offT = setTimeout(() => { if (!S.connected && S.screen !== 'home') $('offline').hidden = false; }, 1500);
+  else offT = setTimeout(() => { if (!S.connected && screen() !== 'home') $('offline').hidden = false; }, 1500);
 }
 function markPresent() {
   if (!S.seat || !S.code) return;
@@ -162,7 +164,7 @@ async function showHome(prefill) {
   if (!prefill && last) {
     try {
       const [meta, seat] = await Promise.all([net.get(`rooms/${last}/meta`), findMySeat(last)]);
-      if (meta && seat && S.screen === 'home') {
+      if (meta && seat && screen() === 'home') {
         $('resume').hidden = false; $('resume').textContent = 'Torna alla partita ' + last; $('resume').dataset.code = last;
         $('create').classList.remove('primary');
       } else if (!meta) store.del('last');
@@ -266,23 +268,25 @@ function showClaim(code) {
   show('claim');
   let meta = null;
   const draw = () => {
-    const ul = $('claimList'); ul.textContent = '';
     const order = (meta && meta.order) || [];
     const free = order.filter(s => S.players[s] && !isOnline(s));
-    for (const s of free) {
-      const li = document.createElement('li');
-      const b = document.createElement('button');
-      b.type = 'button'; b.className = 'kick'; b.textContent = 'Sono io';
-      b.onclick = () => claim(code, s);
-      const nm = document.createElement('span'); nm.className = 'nm'; nm.textContent = nameOf(s);
-      li.append(avatar(s), nm, b);
-      ul.append(li);
-    }
-    if (!free.length) {
-      const li = document.createElement('li');
-      li.innerHTML = '<span class="nm"><small>Tutti i giocatori sono collegati.</small></span>';
-      ul.append(li);
-    }
+    const rows = free.map(s => ({
+      key: s, sig: nameOf(s),
+      build() {
+        const li = document.createElement('li');
+        const b = document.createElement('button');
+        b.type = 'button'; b.className = 'row-action'; b.textContent = 'Sono io';
+        b.onclick = () => claim(code, s);
+        const nm = document.createElement('span'); nm.className = 'nm'; nm.textContent = nameOf(s);
+        li.append(avatar(s), nm, b);
+        return li;
+      }
+    }));
+    if (!rows.length) rows.push({
+      key: '_none', sig: '',
+      build() { const li = document.createElement('li'); const nm = document.createElement('span'); nm.className = 'nm quiet'; nm.textContent = 'Tutti i giocatori sono collegati.'; li.append(nm); return li; }
+    });
+    syncRows($('claimList'), rows);
   };
   S.claimSubs.push(net.on(`rooms/${code}/players`, v => { S.players = v || {}; draw(); }));
   S.claimSubs.push(net.on(`rooms/${code}/presence`, v => { S.presence = v || {}; draw(); }));
@@ -333,12 +337,12 @@ function attach(code, seat) {
   S.subs.push(net.on(room('players'), onPlayers));
   S.subs.push(net.on(room('presence'), v => { S.presence = v || {}; S.presenceLoaded = true; refreshLists(); }));
   if (S.connected) markPresent();
-  S.tick = setInterval(tick, 500);
+  S.tick = setInterval(tick, 250);
   keepAwake();
 }
 async function leaveRoom() {
   const m = S.meta, seat = S.seat;
-  const ok = await ask('Uscire dalla stanza?', m && m.status !== 'lobby' ? 'La partita continuerà senza di te.' : 'Potrai rientrare con lo stesso codice.', 'Esci');
+  const ok = await ask('Uscire dalla stanza?', m && m.status !== 'lobby' ? 'La partita continuerà senza di te.' : 'Potrai rientrare con lo stesso codice.', 'Esci', { danger: true });
   if (!ok) return;
   const up = {};
   if (!m || m.status === 'lobby') {
@@ -366,9 +370,9 @@ function onPlayers(v) {
   refreshLists();
 }
 function refreshLists() {
-  if (S.screen === 'lobby') renderLobby();
-  if (S.screen === 'wait') renderWait();
-  if (S.screen === 'reveal') renderRevealChrome();
+  if (screen() === 'lobby') renderLobby();
+  if (screen() === 'wait') renderWait();
+  if (screen() === 'reveal') renderRevealChrome();
 }
 
 function onMeta(m) {
@@ -376,7 +380,7 @@ function onMeta(m) {
   const prev = S.meta; S.meta = m;
   if (m.status === 'lobby') {
     if (S.doneSub) { S.doneSub(); S.doneSub = null; S.doneKey = null; }
-    S.roundKey = null; S.task = null; stopReveal();
+    S.roundKey = null; S.task = null; clearFeed(); S.rv.key = null;
     renderLobby(); show('lobby');
     if (prev && prev.status !== 'lobby' && prev.host !== S.seat) toast('Nuova partita! Aspettate che ' + nameOf(m.host) + ' la faccia iniziare.');
     return;
@@ -388,7 +392,7 @@ function onMeta(m) {
       S.done = {}; S.doneKey = m.rkey;
       S.doneSub = net.on(room('done/' + m.rkey), v => { S.done = v || {}; onDone(); });
     }
-    if (S.roundKey !== m.rkey) startRound(m.round);
+    if (S.roundKey !== m.rkey) startRound(m.round, !!prev);
     return;
   }
   if (m.status === 'reveal') {
@@ -406,34 +410,27 @@ function renderLobby() {
   $('lobbyCode').textContent = S.code;
   const ids = lobbyIds();
   $('count').textContent = `${ids.length}/${CFG.maxPlayers}`;
-  const ul = $('lobbyPlayers'); ul.textContent = '';
-  for (const id of ids) {
-    const li = document.createElement('li');
-    const nm = document.createElement('span'); nm.className = 'nm'; nm.textContent = nameOf(id);
-    if (id === S.seat) { const sm = document.createElement('small'); sm.textContent = ' (tu)'; nm.append(sm); }
-    li.append(avatar(id), nm);
-    if (id === m.host) li.append(tag('Capo', 'host'));
-    if (!isOnline(id)) li.append(tag('non collegato', 'off'));
-    if (isHost() && id !== S.seat) {
-      const b = document.createElement('button'); b.type = 'button'; b.className = 'kick'; b.textContent = 'Togli';
-      b.setAttribute('aria-label', 'Togli ' + nameOf(id));
-      b.onclick = () => kick(id); li.append(b);
-    }
-    ul.append(li);
-  }
   const host = isHost(), set = settings();
-  const chips = (el, list, cur, key) => {
-    el.textContent = '';
-    for (const v of list) {
-      const b = document.createElement('button'); b.type = 'button';
-      b.textContent = v < 60 ? v + 's' : (v % 60 ? (v / 60).toFixed(1).replace('.', ',') : v / 60) + ' min';
-      b.setAttribute('aria-pressed', v === cur); b.disabled = !host;
-      b.onclick = () => { quiet(net.put(room('meta/settings/' + key), v)); store.set('settings', Object.assign({}, set, { [key]: v })); };
-      el.append(b);
+  syncRows($('lobbyPlayers'), ids.map(id => ({
+    key: id, sig: [nameOf(id), id === S.seat, id === m.host, isOnline(id), host].join('|'),
+    build() {
+      const li = document.createElement('li');
+      const nm = document.createElement('span'); nm.className = 'nm'; nm.textContent = nameOf(id);
+      if (id === S.seat) { const sm = document.createElement('small'); sm.textContent = ' (tu)'; nm.append(sm); }
+      li.append(avatar(id), nm);
+      if (id === m.host) li.append(tag('Capo', 'host'));
+      if (!isOnline(id)) li.append(tag('non collegato', 'off'));
+      if (host && id !== S.seat) {
+        const b = document.createElement('button'); b.type = 'button'; b.className = 'row-action'; b.textContent = 'Togli';
+        b.setAttribute('aria-label', 'Togli ' + nameOf(id));
+        b.onclick = () => kick(id); li.append(b);
+      }
+      return li;
     }
-  };
-  chips($('drawTimes'), CFG.drawTimes, set.draw, 'draw');
-  chips($('writeTimes'), CFG.writeTimes, set.write, 'write');
+  })));
+  for (const [el, cur] of [[$('drawTimes'), set.draw], [$('writeTimes'), set.write]]) {
+    for (const b of el.children) { b.setAttribute('aria-pressed', +b.dataset.v === cur); b.disabled = !host; }
+  }
   $('settingsWho').textContent = host ? '' : 'li sceglie ' + nameOf(m.host);
   const online = ids.filter(id => id === S.seat || isOnline(id)).length;
   $('start').hidden = !host;
@@ -444,7 +441,7 @@ function renderLobby() {
     : `Aspetta che ${nameOf(m.host)} inizi la partita.`;
 }
 async function kick(id) {
-  const ok = await ask('Togliere ' + nameOf(id) + '?', 'Potrà rientrare con il codice della stanza.', 'Togli');
+  const ok = await ask('Togliere ' + nameOf(id) + '?', 'Potrà rientrare con il codice della stanza.', 'Togli', { danger: true });
   if (!ok) return;
   const p = S.players[id];
   quiet(net.patch(room(), { [`players/${id}`]: null, [`members/${p && p.uid}`]: null, [`presence/${id}`]: null }));
@@ -468,7 +465,7 @@ async function startGame() {
   try {
     await net.patch(room(), {
       'meta/status': 'playing', 'meta/round': 0, 'meta/rkey': '0', 'meta/n': ids.length, 'meta/order': ids,
-      'meta/endsAt': now + set.write * 1000 + 1500, 'meta/at': now, 'meta/reveal': null,
+      'meta/endsAt': now + set.write * 1000 + CFG.intro, 'meta/at': now, 'meta/reveal': null,
       done: null, work: null
     });
   } catch (e) { console.warn(e); toast('Non sono riuscito a far partire il gioco. Riprova.'); $('start').disabled = false; }
@@ -494,15 +491,17 @@ async function findSource(c, r) {
   return null;
 }
 
-async function startRound(r) {
+async function startRound(r, live) {
   const token = ++S.roundToken;
   const m = S.meta, order = m.order, N = order.length, i = order.indexOf(S.seat);
   const c = (i + r) % N;
   let kind = kindOf(r);
   S.roundKey = m.rkey; S.submitted = false; S.autoSent = null;
-  S.task = { r, c, kind, token, ready: false, text: '', note: '' };
+  const set = settings(), span = (r % 2 ? set.draw : set.write) * 1000;
+  S.task = { r, c, kind, token, ready: false, text: '', note: '', span, warned: false };
   pad.locked = true;
-  loading(r === 0 ? 'Si comincia!' : 'Arriva il turno ' + (r + 1) + '…');
+  intro(r, N);
+  const shown = live ? wait(900) : null;      // seen live, the card stays long enough to be read
   let mine = null, src = null;
   for (let attempt = 0; ; attempt++) {
     try {
@@ -514,6 +513,7 @@ async function startRound(r) {
       if (token !== S.roundToken) return;
     }
   }
+  await shown;
   if (token !== S.roundToken || !S.task) return;
   const t = S.task;
   const local = store.get(localKey(r));
@@ -531,7 +531,7 @@ async function startRound(r) {
       quiet(net.put(room(`work/${r}/${S.seat}/s`), obj));
     }
     pad.load(strokes); updUndo();
-    $('drawEyebrow').textContent = `Turno ${r + 1} di ${N} · Disegna`;
+    $('drawEyebrow').textContent = `Turno ${r + 1} di ${N}`;
     $('drawPrompt').textContent = t.prompt;
   } else {
     if (kind === 'describe') {
@@ -549,7 +549,7 @@ async function startRound(r) {
       : 'Il disegno che dovevi descrivere è rimasto vuoto. Scrivi una frase da far disegnare.';
   }
   t.ready = true;
-  if (navigator.vibrate) try { navigator.vibrate(40); } catch (e) {}
+  haptic('medium');
   if (S.done[S.seat] === true) { S.submitted = true; showWait(); }
   else showTask();
   if (t.note) toast(t.note);
@@ -570,7 +570,7 @@ function showTask() {
   tick();
 }
 function fitSeen() {
-  const t = S.task; if (!t || t.kind !== 'describe' || S.screen !== 'write') return;
+  const t = S.task; if (!t || t.kind !== 'describe' || screen() !== 'write') return;
   const r = $('writeStage').getBoundingClientRect();
   const w = Math.floor(Math.min(r.width, r.height / RATIO));
   if (w < 40) return;
@@ -630,6 +630,7 @@ async function submit(auto) {
     $('phrase').blur();
   }
   S.submitted = true;
+  if (!auto) haptic('success');
   showWait();
   quiet(net.put(room(`done/${t.r}/${S.seat}`), true));
 }
@@ -648,28 +649,30 @@ function renderWait() {
   $('waitEyebrow').textContent = `Turno ${r + 1} di ${order.length}`;
   $('waitCount').textContent = `${done} di ${order.length} ${done === 1 ? 'ha' : 'hanno'} finito`;
   $('waitMeter').style.width = Math.round(done / Math.max(1, order.length) * 100) + '%';
-  const ul = $('waitPlayers'); ul.textContent = '';
   const doing = r % 2 ? 'sta disegnando' : 'sta scrivendo';
-  for (const s of order) {
-    const li = document.createElement('li');
-    const nm = document.createElement('span'); nm.className = 'nm'; nm.textContent = nameOf(s);
-    if (s === S.seat) { const sm = document.createElement('small'); sm.textContent = ' (tu)'; nm.append(sm); }
-    li.append(avatar(s), nm);
-    if (S.done[s] === true) li.append(tag('ha finito', 'ok'));
-    else if (!isOnline(s)) li.append(tag('non collegato', 'off'));
-    else li.append(tag(doing));
-    ul.append(li);
-  }
+  syncRows($('waitPlayers'), order.map(s => {
+    const state = S.done[s] === true ? 'ok' : !isOnline(s) ? 'off' : 'busy';
+    return {
+      key: s, sig: [nameOf(s), state, doing, isOnline(s)].join('|'),
+      build() {
+        const li = document.createElement('li');
+        const nm = document.createElement('span'); nm.className = 'nm'; nm.textContent = nameOf(s);
+        if (s === S.seat) { const sm = document.createElement('small'); sm.textContent = ' (tu)'; nm.append(sm); }
+        li.append(avatar(s), nm, state === 'ok' ? tag('ha finito', 'ok') : state === 'off' ? tag('non collegato', 'off') : tag(doing));
+        return li;
+      }
+    };
+  }));
 }
 
 function onDone() {
   const t = S.task;
   if (t && t.ready) {
     const mine = S.done[S.seat] === true;
-    if (mine && (S.screen === 'draw' || S.screen === 'write')) { pad.cancelStroke(); flushText(); S.submitted = true; showWait(); }
-    else if (!mine && S.screen === 'wait' && !S.submitted) showTask();
+    if (mine && (screen() === 'draw' || screen() === 'write')) { pad.cancelStroke(); flushText(); S.submitted = true; showWait(); }
+    else if (!mine && screen() === 'wait' && !S.submitted) showTask();
   }
-  if (S.screen === 'wait') renderWait();
+  if (screen() === 'wait') renderWait();
   maybeAdvance(net.now());
 }
 
@@ -678,11 +681,15 @@ function tick() {
   const m = S.meta; if (!m) return;
   const now = net.now();
   if (m.status === 'playing' && S.task && S.task.ready && S.roundKey === m.rkey) {
-    const left = m.endsAt - now;
+    const left = m.endsAt - now, t = S.task;
+    const label = fmt(Math.min(left, t.span)), urgent = left > 0 && left <= 10000;
+    const share = Math.max(0, Math.min(1, left / t.span)).toFixed(3);
     for (const el of document.querySelectorAll('.timer')) {
-      el.textContent = fmt(left);
-      el.classList.toggle('urgent', left > 0 && left <= 10000);
+      if (el.textContent !== label) el.textContent = label;
+      el.style.setProperty('--left', share);
+      el.classList.toggle('urgent', urgent);
     }
+    if (urgent && !t.warned && S.done[S.seat] !== true) { t.warned = true; haptic('warning'); }
     $('edit').disabled = left < 1500;
     if (left <= 0 && S.autoSent !== m.rkey && S.done[S.seat] !== true) { S.autoSent = m.rkey; submit(true); }
     maybeAdvance(now);
@@ -709,7 +716,7 @@ async function advance(r) {
       const now = net.now(), next = r + 1, set = Object.assign({}, CFG.defaults, m.settings || {});
       m.at = now;
       if (next >= m.n) { m.status = 'reveal'; m.round = next; m.rkey = null; m.endsAt = null; m.reveal = { c: 0, s: 1 }; }
-      else { m.round = next; m.rkey = String(next); m.endsAt = now + (next % 2 ? set.draw : set.write) * 1000; }
+      else { m.round = next; m.rkey = String(next); m.endsAt = now + (next % 2 ? set.draw : set.write) * 1000 + CFG.intro; }
       return m;
     });
   } catch (e) { console.warn('[scarabokki] advance', e && e.message); }
@@ -736,6 +743,12 @@ function maybeTakeHost(now) {
 // Reveal: the host steps through every album, everyone sees the same thing
 // ---------------------------------------------------------------------------
 function stopReveal() { (S.rv.stops || []).forEach(f => f()); S.rv.stops = []; }
+function clearFeed() {
+  stopReveal();
+  const feed = $('feed');
+  for (const cv of feed.querySelectorAll('canvas')) release(cv);
+  feed.textContent = '';
+}
 function chainEntries(c) {
   const m = S.meta, key = gameKey() + ':' + c;
   if (S.rv.cache[key]) return S.rv.cache[key];
@@ -762,10 +775,11 @@ async function onReveal() {
   if (S.meta !== m && revealPos().c !== pos.c) return;   // moved on while loading
   if (pos.c + 1 < N) chainEntries(pos.c + 1);            // prefetch the next album
   const feed = $('feed');
-  if (fresh) { stopReveal(); feed.textContent = ''; S.rv.key = viewKey; S.rv.shown = 0; }
+  if (fresh) { clearFeed(); S.rv.key = viewKey; S.rv.shown = 0; }
   const from = S.rv.shown, to = pos.s;
-  if (to < from) { stopReveal(); feed.textContent = ''; S.rv.shown = 0; return onReveal(); }
+  if (to < from) { clearFeed(); S.rv.shown = 0; return onReveal(); }
   for (let k = from; k < to; k++) feed.append(entryEl(entries[k], k === to - 1 && !pos.fin && !fresh));
+  if (to > from && !fresh && !isHost()) haptic('light');
   S.rv.shown = to;
   requestAnimationFrame(() => {
     const last = feed.lastElementChild;
@@ -779,7 +793,7 @@ function entryEl(e, animate) {
   const who = document.createElement('div'); who.className = 'who';
   const b = document.createElement('b'); b.textContent = nameOf(e.by);
   const drawing = e.k % 2 === 1;
-  who.append(avatar(e.by, true), b, document.createTextNode(drawing ? ' ha disegnato' : e.k === 0 ? ' ha scritto' : ' ha visto'));
+  who.append(avatar(e.by, true), b, document.createTextNode(verbOf(e.k)));
   el.append(who);
   if (drawing) {
     const strokes = strokesFrom(e.v && e.v.s);
@@ -788,12 +802,12 @@ function entryEl(e, animate) {
     el.append(cv);
     requestAnimationFrame(() => {
       const w = Math.min($('feed').clientWidth - 4, 440);
-      sizeCanvas(cv, w);
+      sizeCanvas(cv, w, 2);
       if (animate) S.rv.stops.push(replay(cv, strokes)); else render(cv, strokes);
     });
   } else {
     const p = document.createElement('p'); p.className = 'said';
-    const t = e.v && typeof e.v.t === 'string' ? e.v.t.trim() : '';
+    const t = textOf(e);
     if (t) p.textContent = t; else { p.textContent = 'Non ha scritto niente'; p.classList.add('empty'); }
     el.append(p);
   }
@@ -815,6 +829,8 @@ function renderRevealChrome() {
       b.onclick = () => { S.rv.browse = c; onReveal(); };
       albums.append(b);
     });
+    const on = albums.querySelector('[aria-pressed="true"]');
+    if (on) on.scrollIntoView({ block: 'nearest', inline: 'center' });
   }
   $('next').hidden = !host || pos.fin;
   $('again').hidden = !host || !pos.fin;
@@ -845,72 +861,18 @@ async function newGame() {
   }));
 }
 
-// Album as one tall picture, ready to send in the group chat.
-function wrapLines(ctx, text, max) {
-  const words = text.split(/\s+/), lines = []; let line = '';
-  for (const w of words) {
-    const test = line ? line + ' ' + w : w;
-    if (ctx.measureText(test).width > max && line) { lines.push(line); line = w; } else line = test;
-  }
-  if (line) lines.push(line);
-  return lines.length ? lines : [''];
-}
-function rr(ctx, x, y, w, h, r) {
-  ctx.beginPath();
-  if (ctx.roundRect) ctx.roundRect(x, y, w, h, r); else ctx.rect(x, y, w, h);
-}
-async function albumBlob(c) {
-  const m = S.meta, entries = await chainEntries(c), owner = m.order[c];
-  try { await Promise.all([document.fonts.load('56px "Lilita One"'), document.fonts.load('600 30px Figtree')]); } catch (e) {}
-  const W = 1080, P = 64, inner = W - P * 2, DW = 760, DH = Math.round(DW * RATIO);
-  const disp = '"Lilita One", "Arial Rounded MT Bold", sans-serif', body = 'Figtree, system-ui, sans-serif';
-  const meas = document.createElement('canvas').getContext('2d');
-  meas.font = `52px ${disp}`;
-  const blocks = entries.map(e => {
-    const drawing = e.k % 2 === 1;
-    if (drawing) { const strokes = strokesFrom(e.v && e.v.s); return { e, drawing, strokes, h: 48 + (strokes.length ? DH : 120) + 44 }; }
-    const t = (e.v && typeof e.v.t === 'string' && e.v.t.trim()) || '…';
-    const lines = wrapLines(meas, t, inner - 64);
-    return { e, drawing, lines, h: 48 + lines.length * 62 + 44 + 44 };
-  });
-  const H = 230 + blocks.reduce((a, b) => a + b.h, 0) + 90;
-  const f = Math.min(1, Math.sqrt(14e6 / (W * H)));
-  const cv = document.createElement('canvas');
-  cv.width = Math.round(W * f); cv.height = Math.round(H * f);
-  const x = cv.getContext('2d'); x.scale(f, f);
-  const bg = x.createLinearGradient(0, 0, W * .4, H); bg.addColorStop(0, '#F4EFFF'); bg.addColorStop(1, '#FFF0F4'); x.fillStyle = bg; x.fillRect(0, 0, W, H);
-  x.fillStyle = '#6F6787'; x.font = `700 26px ${body}`; x.fillText('SCARABOKKI · PARTITA ' + S.code, P, 92);
-  x.fillStyle = '#2E2643'; x.font = `76px ${disp}`; x.fillText('L’album di ' + nameOf(owner), P, 178, inner);
-  let y = 230;
-  for (const b of blocks) {
-    x.fillStyle = colorOf(b.e.by); x.beginPath(); x.arc(P + 16, y + 18, 16, 0, Math.PI * 2); x.fill();
-    x.fillStyle = '#2E2643'; x.font = `700 28px ${body}`;
-    const label = nameOf(b.e.by) + (b.drawing ? ' ha disegnato' : b.e.k === 0 ? ' ha scritto' : ' ha visto');
-    x.fillText(label, P + 44, y + 28, inner - 44);
-    y += 48;
-    if (b.drawing) {
-      const dx = (W - DW) / 2;
-      x.save(); x.shadowColor = 'rgba(80,60,140,.16)'; x.shadowBlur = 24; x.shadowOffsetY = 6;
-      x.fillStyle = '#FFFFFF'; x.fillRect(dx, y, DW, b.strokes.length ? DH : 120); x.restore();
-      if (b.strokes.length) paintInto(x, dx, y, DW / UNIT, b.strokes);
-      else { x.fillStyle = '#6F6787'; x.font = `italic 30px ${body}`; x.fillText('Foglio bianco', dx + 32, y + 70); }
-      y += (b.strokes.length ? DH : 120) + 44;
-    } else {
-      const bh = b.lines.length * 62 + 44;
-      x.save(); x.shadowColor = 'rgba(80,60,140,.14)'; x.shadowBlur = 20; x.shadowOffsetY = 4;
-      x.fillStyle = '#FFFFFF'; rr(x, P, y, inner, bh, 26); x.fill(); x.restore();
-      x.fillStyle = '#2E2643'; x.font = `52px ${disp}`;
-      b.lines.forEach((ln, j) => x.fillText(ln, P + 32, y + 22 + 50 + j * 62, inner - 64));
-      y += bh + 44;
-    }
-  }
-  return new Promise(res => cv.toBlob(res, 'image/png'));
-}
 async function shareAlbum() {
   const c = revealPos().c, who = nameOf(S.meta.order[c]);
-  const btn = $('share'); btn.disabled = true; const label = btn.textContent; btn.textContent = '…';
+  const btn = $('share'); if (btn.disabled) return;
+  btn.disabled = true; btn.classList.add('busy');
   try {
-    const blob = await albumBlob(c);
+    const blob = await albumBlob({
+      code: S.code, title: 'L’album di ' + who,
+      entries: (await chainEntries(c)).map(e => ({
+        label: nameOf(e.by) + verbOf(e.k), color: colorOf(e.by), drawing: e.k % 2 === 1,
+        text: textOf(e), strokes: e.k % 2 === 1 ? strokesFrom(e.v && e.v.s) : []
+      }))
+    });
     if (!blob) throw new Error('blob');
     const name = `scarabokki-${S.code}-${who.toLowerCase().replace(/[^a-z0-9]+/gi, '-')}.png`;
     const file = new File([blob], name, { type: 'image/png' });
@@ -924,7 +886,7 @@ async function shareAlbum() {
       toast('Immagine dell’album scaricata.');
     }
   } catch (e) { console.warn(e); toast('Non sono riuscito a creare l’immagine.'); }
-  btn.disabled = false; btn.textContent = label;
+  btn.disabled = false; btn.classList.remove('busy');
 }
 
 // ---------------------------------------------------------------------------
@@ -969,7 +931,7 @@ function setupDrawTools() {
   ['pointerup', 'pointerleave', 'pointercancel'].forEach(t => u.addEventListener(t, stop));
   u.addEventListener('click', e => { if (e.detail === 0) pad.undo(); });
   window.addEventListener('keydown', e => {
-    if (S.screen === 'draw' && (e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z') { e.preventDefault(); pad.undo(); }
+    if (screen() === 'draw' && (e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z') { e.preventDefault(); pad.undo(); }
   });
 }
 function blockGestures() {
@@ -984,9 +946,32 @@ function blockGestures() {
   draw.addEventListener('touchmove', stop, { passive: false });
   for (const t of ['contextmenu', 'selectstart', 'dragstart']) draw.addEventListener(t, stop);
 }
+function setupTimes(el, list, key) {
+  for (const v of list) {
+    const b = document.createElement('button'); b.type = 'button'; b.dataset.v = v;
+    b.textContent = v < 60 ? v + ' s' : (v % 60 ? (v / 60).toFixed(1).replace('.', ',') : v / 60) + ' min';
+    b.onclick = () => {
+      if (!isHost()) return;
+      quiet(net.put(room('meta/settings/' + key), v));
+      store.set('settings', Object.assign({}, settings(), { [key]: v }));
+    };
+    el.append(b);
+  }
+}
+async function copyCode() {
+  try { await navigator.clipboard.writeText(S.code); toast('Codice copiato.'); } catch (e) {}
+}
 function setupStatic() {
   setupDrawTools();
   blockGestures();
+  setupTimes($('drawTimes'), CFG.drawTimes, 'draw');
+  setupTimes($('writeTimes'), CFG.writeTimes, 'write');
+  $('lobbyCode').onclick = copyCode;
+  // every button answers the finger with a light tap
+  document.addEventListener('pointerdown', e => {
+    const b = e.target.closest && e.target.closest('button');
+    if (b && !b.disabled) haptic('light');
+  }, { passive: true });
   $('homeForm').addEventListener('submit', e => {
     e.preventDefault();
     const code = $('code').value.trim().toUpperCase();
