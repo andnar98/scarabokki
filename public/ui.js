@@ -54,27 +54,63 @@ export function toast(msg, ms = 3500) {
   }, ms);
 }
 
-// ---------- confirmation sheet ----------
+// ---------- sheets (confirmation and menu) ----------
+let closeTop = null;     // closes the sheet on screen, if any (the system back gesture uses it)
+export function dismissTop() { if (!closeTop) return false; closeTop(); return true; }
+function openBox(box) { clearTimeout(box._hideT); box.classList.remove('leaving'); box.hidden = false; }
+function closeBox(box) {
+  box.classList.add('leaving');
+  box._hideT = setTimeout(() => { box.hidden = true; box.classList.remove('leaving'); }, 200);
+}
+// Wires a sheet: tapping outside, Escape and the back gesture all answer `cancel`.
+function sheet(box, cancel, resolve) {
+  const back = document.activeElement;
+  let settled = false;
+  const done = v => {
+    if (settled) return; settled = true;
+    if (closeTop === close) closeTop = null;
+    box.onclick = null; window.removeEventListener('keydown', onKey);
+    closeBox(box);
+    if (back && back.focus) try { back.focus({ preventScroll: true }); } catch (e) {}
+    resolve(v);
+  };
+  const close = () => done(cancel);
+  const onKey = e => { if (e.key === 'Escape') close(); };
+  box.onclick = e => { if (e.target === box) close(); };
+  window.addEventListener('keydown', onKey);
+  if (closeTop) closeTop();
+  closeTop = close;
+  openBox(box);
+  return done;
+}
 export function ask(title, text, yes = 'Conferma', { danger = false } = {}) {
   return new Promise(resolve => {
-    const box = $('ask'), y = $('askYes'), n = $('askNo');
+    const y = $('askYes'), n = $('askNo');
     $('askTitle').textContent = title; $('askText').textContent = text; y.textContent = yes;
     y.classList.toggle('danger', danger); y.classList.toggle('primary', !danger);
-    box.classList.remove('leaving'); box.hidden = false;
-    const back = document.activeElement;
-    const done = v => {
-      y.onclick = n.onclick = box.onclick = null; window.removeEventListener('keydown', onKey);
-      box.classList.add('leaving');
-      setTimeout(() => { box.hidden = true; box.classList.remove('leaving'); }, 200);
-      if (back && back.focus) try { back.focus({ preventScroll: true }); } catch (e) {}
-      resolve(v);
-    };
-    const onKey = e => { if (e.key === 'Escape') done(false); };
+    const done = sheet($('ask'), false, resolve);
     y.onclick = () => done(true);
     n.onclick = () => done(false);
-    box.onclick = e => { if (e.target === box) done(false); };
-    window.addEventListener('keydown', onKey);
     y.focus({ preventScroll: true });
+  });
+}
+// actions: [{ value, label, detail?, danger? }]  ->  the chosen value, or null
+export function menu({ title, text = '', actions }) {
+  return new Promise(resolve => {
+    $('menuTitle').textContent = title;
+    const t = $('menuText'); t.textContent = text; t.hidden = !text;
+    const list = $('menuActions'); list.textContent = '';
+    const done = sheet($('menu'), null, resolve);
+    for (const a of actions) {
+      const b = document.createElement('button');
+      b.type = 'button'; b.className = 'menu-item' + (a.danger ? ' danger' : '');
+      const l = document.createElement('span'); l.className = 'menu-label'; l.textContent = a.label; b.append(l);
+      if (a.detail) { const d = document.createElement('span'); d.className = 'menu-detail'; d.textContent = a.detail; b.append(d); }
+      b.onclick = () => done(a.value);
+      list.append(b);
+    }
+    $('menuCancel').onclick = () => done(null);
+    const first = list.querySelector('button'); if (first) first.focus({ preventScroll: true });
   });
 }
 

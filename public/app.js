@@ -1,6 +1,6 @@
 import * as net from './net.js';
 import { Pad, COLORS, RATIO, render, replay, sizeCanvas, release, strokesFrom, encode, strokeKey } from './draw.js';
-import { $, screen, showScreen, toast, ask, haptic, syncRows } from './ui.js';
+import { $, screen, showScreen, toast, ask, menu, dismissTop, haptic, syncRows } from './ui.js';
 import { albumBlob } from './album.js';
 
 // ---------------------------------------------------------------------------
@@ -144,8 +144,20 @@ function markPresent() {
 // Home
 // ---------------------------------------------------------------------------
 function codeFromHash() { const m = /^#([A-Za-z]{4})$/.exec(location.hash); return m ? m[1].toUpperCase() : null; }
-function setHash(code) { if (location.hash !== '#' + code) history.replaceState(null, '', '#' + code); }
-function clearHash() { if (location.hash) history.replaceState(null, '', location.pathname + location.search); }
+function setHash(code) { if (location.hash !== '#' + code) history.replaceState(history.state, '', '#' + code); }
+function clearHash() { history.replaceState(null, '', location.pathname + location.search); }
+// While in a room an extra history entry catches the system back gesture (Android back,
+// iPhone swipe in Safari): it opens the game menu instead of closing the game.
+function guardHistory() {
+  try { if (!(history.state && history.state.scara === S.code)) history.pushState({ scara: S.code }, '', '#' + S.code); } catch (e) {}
+}
+function onBack() {
+  if (dismissTop()) return;
+  if (screen() === 'claim') { detach(); clearHash(); showHome(); return; }
+  const m = S.meta;
+  if (!S.seat || !m) return;
+  if (m.status === 'lobby') leaveRoom(); else openGameMenu();
+}
 function getName() { return $('name').value.trim().replace(/\s+/g, ' ').slice(0, CFG.nameMax); }
 
 async function showHome(prefill) {
@@ -265,6 +277,11 @@ function showClaim(code) {
   detach(); stopClaim();
   S.code = code;
   $('claimCode').textContent = 'Partita ' + code;
+  const known = (store.get('name', '') || '').trim();
+  $('claimName').hidden = !!known; $('claimName').value = '';
+  $('claimWait').textContent = known
+    ? 'Altrimenti resta qui: entrerai da solo nella prossima partita.'
+    : 'Altrimenti scrivi il tuo nome e resta qui: entrerai da solo nella prossima partita.';
   show('claim');
   let meta = null;
   const draw = () => {
@@ -294,9 +311,12 @@ function showClaim(code) {
     meta = v;
     if (!v) { stopClaim(); showHome(); toast('La partita è finita.'); return; }
     if (v.status === 'lobby') {
-      const name = (store.get('name', '') || '').trim();
+      const typed = $('claimName').value.trim().replace(/\s+/g, ' ').slice(0, CFG.nameMax);
+      if (typed) store.set('name', typed);
+      const name = typed || (store.get('name', '') || '').trim();
       stopClaim();
-      if (name) joinLobby(code, name); else showHome(code);
+      if (name) joinLobby(code, name);
+      else { showHome(code); toast('La stanza è di nuovo aperta: scrivi il tuo nome e tocca Entra.', 4500); }
       return;
     }
     draw();
@@ -332,7 +352,7 @@ function detach() {
 function attach(code, seat) {
   detach();
   S.code = code; S.seat = seat; S.attachedAt = Date.now();
-  setHash(code); store.set('last', code);
+  setHash(code); guardHistory(); store.set('last', code);
   S.subs.push(net.on(room('meta'), onMeta));
   S.subs.push(net.on(room('players'), onPlayers));
   S.subs.push(net.on(room('presence'), v => { S.presence = v || {}; S.presenceLoaded = true; refreshLists(); }));
@@ -342,19 +362,21 @@ function attach(code, seat) {
 }
 async function leaveRoom() {
   const m = S.meta, seat = S.seat;
-  const ok = await ask('Uscire dalla stanza?', m && m.status !== 'lobby' ? 'La partita continuerà senza di te.' : 'Potrai rientrare con lo stesso codice.', 'Esci', { danger: true });
+  const ok = await ask(m && m.status !== 'lobby' ? 'Uscire dalla partita?' : 'Uscire dalla stanza?',
+    m && m.status !== 'lobby' ? 'La partita continuerà senza di te. Con lo stesso link puoi rientrare quando vuoi.' : 'Potrai rientrare con lo stesso codice.',
+    'Esci', { danger: true });
   if (!ok) return;
-  const up = {};
-  if (!m || m.status === 'lobby') {
-    up[`players/${seat}`] = null; up[`members/${S.uid}`] = null; up[`presence/${seat}`] = null;
-    if (isHost()) {
-      const next = lobbyIds().filter(id => id !== seat && isOnline(id))[0] || lobbyIds().filter(id => id !== seat)[0];
-      if (next) up['meta/host'] = next;
-    }
+  const up = {}, inGame = m && m.status !== 'lobby';
+  if (inGame) up[`presence/${seat}`] = { on: false, at: 0 };     // counts as gone right away: nobody waits
+  else { up[`players/${seat}`] = null; up[`members/${S.uid}`] = null; up[`presence/${seat}`] = null; }
+  if (isHost()) {
+    const pool = (inGame ? m.order || [] : []).concat(lobbyIds()).filter(id => id !== seat && S.players[id]);
+    const next = pool.find(isOnline) || pool[0];
+    if (next) up['meta/host'] = next;
   }
   const code = S.code;
   quiet(net.cancelDrop(room('presence/' + seat)));
-  try { if (Object.keys(up).length) await net.patch(`rooms/${code}`, up); else await net.put(`rooms/${code}/presence/${seat}`, { on: false, at: net.TS }); } catch (e) {}
+  try { await net.patch(`rooms/${code}`, up); } catch (e) {}
   store.del('last'); clearHash();
   showHome();
 }
@@ -381,8 +403,13 @@ function onMeta(m) {
   if (m.status === 'lobby') {
     if (S.doneSub) { S.doneSub(); S.doneSub = null; S.doneKey = null; }
     S.roundKey = null; S.task = null; clearFeed(); S.rv.key = null;
+    pad.releaseAll(); pad.locked = true;
     renderLobby(); show('lobby');
-    if (prev && prev.status !== 'lobby' && prev.host !== S.seat) toast('Nuova partita! Aspettate che ' + nameOf(m.host) + ' la faccia iniziare.');
+    if (prev && prev.status !== 'lobby' && m.host !== S.seat) {
+      toast(prev.status === 'playing'
+        ? nameOf(m.host) + ' ha interrotto la partita: siete tornati nella stanza.'
+        : 'Nuova partita! Aspettate che ' + nameOf(m.host) + ' la faccia iniziare.', 4500);
+    }
     return;
   }
   if (m.status === 'playing') {
@@ -435,9 +462,10 @@ function renderLobby() {
   const online = ids.filter(id => id === S.seat || isOnline(id)).length;
   $('start').hidden = !host;
   $('start').disabled = online < CFG.minPlayers;
-  const rounds = online;
+  const away = ids.filter(id => id !== S.seat && !isOnline(id)).map(nameOf);
+  const awayNote = !away.length ? '' : away.length === 1 ? ` ${away[0]} è offline e resterà fuori.` : ` ${away.slice(0, -1).join(', ')} e ${away[away.length - 1]} sono offline e resteranno fuori.`;
   $('lobbyHint').textContent = host
-    ? (online < CFG.minPlayers ? 'Invita almeno un amico: mandagli il link con “Invita”.' : `Si giocano ${rounds} turni, uno per giocatore.`)
+    ? (online < CFG.minPlayers ? 'Invita almeno un amico: mandagli il link con “Invita”.' : `Si giocano ${online} turni, uno per giocatore.` + awayNote)
     : `Aspetta che ${nameOf(m.host)} inizi la partita.`;
 }
 async function kick(id) {
@@ -621,7 +649,7 @@ function flushText() {
 async function submit(auto) {
   const t = S.task; if (!t || !t.ready) return;
   if (t.kind === 'draw') {
-    pad.finish();
+    pad.releaseAll(); pad.finish();
     if (!auto && !pad.strokes.length) { toast('Disegna qualcosa prima di consegnare.'); return; }
     pad.locked = true;
   } else {
@@ -649,6 +677,7 @@ function renderWait() {
   $('waitEyebrow').textContent = `Turno ${r + 1} di ${order.length}`;
   $('waitCount').textContent = `${done} di ${order.length} ${done === 1 ? 'ha' : 'hanno'} finito`;
   $('waitMeter').style.width = Math.round(done / Math.max(1, order.length) * 100) + '%';
+  $('endRound').hidden = !isHost() || done >= order.length;
   const doing = r % 2 ? 'sta disegnando' : 'sta scrivendo';
   syncRows($('waitPlayers'), order.map(s => {
     const state = S.done[s] === true ? 'ok' : !isOnline(s) ? 'off' : 'busy';
@@ -832,7 +861,8 @@ function renderRevealChrome() {
     const on = albums.querySelector('[aria-pressed="true"]');
     if (on) on.scrollIntoView({ block: 'nearest', inline: 'center' });
   }
-  $('next').hidden = !host || pos.fin;
+  $('stepRow').hidden = !host || pos.fin;
+  $('prev').disabled = pos.c === 0 && pos.s <= 1;
   $('again').hidden = !host || !pos.fin;
   $('exitReveal').hidden = !pos.fin;
   if (!pos.fin) $('next').textContent = pos.s < N ? 'Avanti' : pos.c < N - 1 ? 'Album successivo' : 'Fine';
@@ -850,15 +880,57 @@ function revealNext() {
   else nv = { c: rv.c, s: N, fin: true };
   quiet(net.patch(room('meta'), { reveal: nv, at: net.now() }));
 }
+function revealPrev() {
+  const m = S.meta; if (!m || !isHost()) return;
+  const rv = m.reveal || { c: 0, s: 1 }, N = m.n;
+  let nv;
+  if (rv.s > 1) nv = { c: rv.c, s: rv.s - 1 };
+  else if (rv.c > 0) nv = { c: rv.c - 1, s: N };
+  else return;
+  quiet(net.patch(room('meta'), { reveal: nv, at: net.now() }));
+}
 async function newGame() {
   const ok = await ask('Nuova partita?', 'Gli album di questa partita verranno cancellati. Salvate prima quelli che volete tenere.', 'Nuova partita');
-  if (!ok) return;
-  const m = S.meta;
+  if (ok) resetToLobby();
+}
+// Everyone goes back to the player list; the drawings of this game are deleted.
+function resetToLobby() {
+  const m = S.meta; if (!m || !isHost()) return;
   quiet(net.patch(room(), {
     'meta/status': 'lobby', 'meta/round': -1, 'meta/rkey': null, 'meta/order': null, 'meta/n': null,
     'meta/endsAt': null, 'meta/reveal': null, 'meta/at': net.now(), 'meta/game': (m.game || 0) + 1,
     done: null, work: null
   }));
+}
+
+// Ends the round now for everyone: whoever has not finished hands in what they have.
+function endRoundNow() {
+  const m = S.meta; if (!m || !isHost() || m.status !== 'playing') return;
+  const r = m.round;
+  net.txn(room('meta'), x => {
+    if (x === null) return x;
+    if (x.status !== 'playing' || x.round !== r) return;
+    x.endsAt = Math.min(x.endsAt || 0, net.now()); x.at = net.now();
+    return x;
+  }).then(ok => { if (ok) toast('Turno chiuso: si passa al prossimo.'); }).catch(noop);
+}
+async function openGameMenu() {
+  const m = S.meta; if (!m || !S.seat || m.status === 'lobby') return;
+  const host = isHost(), playing = m.status === 'playing' && (m.order || []).includes(S.seat);
+  const actions = [];
+  if (host && playing) actions.push({ value: 'end', label: 'Chiudi il turno adesso', detail: 'Chi non ha finito consegna quello che ha fatto finora.' });
+  if (host) actions.push({ value: 'lobby', label: 'Torna alla stanza', detail: 'La partita si interrompe: potete aggiungere qualcuno e ricominciare.' });
+  actions.push({ value: 'leave', label: 'Esci dalla partita', danger: true });
+  const pick = await menu({
+    title: 'Partita ' + S.code,
+    text: host ? 'Sei il capo della stanza.' : `Solo ${nameOf(m.host)}, capo della stanza, può chiudere il turno o interrompere la partita.`,
+    actions
+  });
+  if (pick === 'end') endRoundNow();
+  else if (pick === 'lobby') {
+    const ok = await ask('Tornare alla stanza?', 'La partita si interrompe per tutti e i disegni fatti finora vanno persi.', 'Torna alla stanza', { danger: true });
+    if (ok) resetToLobby();
+  } else if (pick === 'leave') leaveRoom();
 }
 
 async function shareAlbum() {
@@ -914,7 +986,7 @@ function setupDrawTools() {
   $('pen').onclick = () => { pad.tool = 'pen'; renderTools(); };
   $('rub').onclick = () => { pad.tool = 'rub'; renderTools(); };
   $('fill').onclick = () => { pad.tool = 'fill'; renderTools(); };
-  $('zoomReset').onclick = () => pad.resetView();
+  $('zoomReset').onclick = () => { pad.releaseAll(); pad.resetView(); };
   $('sizes').onclick = e => {
     const b = e.target.closest('[data-size]'); if (!b) return;
     pad.size = +b.dataset.size; if (pad.tool === 'fill') pad.tool = 'pen';
@@ -996,10 +1068,20 @@ function setupStatic() {
   $('phrase').addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); submit(false); } });
   $('idea').onclick = () => { $('phrase').value = idea(); onText(); };
   $('next').onclick = revealNext;
+  $('prev').onclick = revealPrev;
+  $('endRound').onclick = endRoundNow;
+  for (const b of document.querySelectorAll('.crumb')) b.onclick = openGameMenu;
+  window.addEventListener('popstate', () => {
+    S.popAt = performance.now();
+    if (S.code) { guardHistory(); onBack(); return; }
+    dismissTop();
+    if (codeFromHash()) clearHash();      // an old room link in the history must not re-enter it
+  });
   $('again').onclick = newGame;
   $('share').onclick = shareAlbum;
   new ResizeObserver(fitSeen).observe($('writeStage'));
   window.addEventListener('hashchange', () => {
+    if (performance.now() - (S.popAt || 0) < 800) return;
     const c = codeFromHash();
     if (c && c !== S.code) tryEnter(c, true);
   });

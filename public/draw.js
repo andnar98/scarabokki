@@ -261,6 +261,11 @@ export class Pad {
     canvas.addEventListener('pointerup', e => this.up(e));
     canvas.addEventListener('pointercancel', e => this.up(e));
     canvas.addEventListener('wheel', e => this.wheel(e), { passive: false });
+    // A finger whose end the browser never reported (notification, app switch, system gesture)
+    // must not stay registered, or every new touch would be taken for a second finger.
+    for (const t of ['touchend', 'touchcancel']) canvas.addEventListener(t, e => this.touchSync(e));
+    window.addEventListener('blur', () => this.releaseAll());
+    document.addEventListener('visibilitychange', () => { if (document.hidden) this.releaseAll(); });
     // The canvas only draws: no scrolling, page zoom, text selection, magnifier or long-press menu.
     const stop = e => { if (e.cancelable) e.preventDefault(); };
     for (const t of ['touchstart', 'touchmove', 'touchend', 'touchcancel']) canvas.addEventListener(t, stop, { passive: false });
@@ -339,7 +344,9 @@ export class Pad {
     if (e.cancelable) e.preventDefault();
     if (this.locked) return;
     if (e.pointerType === 'mouse' && e.button > 0) return;
-    this.pts.set(e.pointerId, this.cpos(e));
+    // the first finger of a new touch: anything still registered of the same kind is stale
+    if (e.isPrimary) this.releaseAll('pointercancel', e.pointerType);
+    this.pts.set(e.pointerId, Object.assign(this.cpos(e), { type: e.pointerType }));
     try { this.cv.setPointerCapture(e.pointerId); } catch (err) {}
     if (this.pts.size >= 2) { this.startPinch(); return; }
     if (this.gesture) return;
@@ -364,7 +371,7 @@ export class Pad {
   move(e) {
     if (!this.pts.has(e.pointerId)) return;
     if (e.cancelable) e.preventDefault();
-    this.pts.set(e.pointerId, this.cpos(e));
+    this.pts.set(e.pointerId, Object.assign(this.cpos(e), { type: this.pts.get(e.pointerId).type }));
     if (this.pinch) {
       const [a, b] = [...this.pts.values()], P = this.pinch, m = mid(a, b);
       const z = Math.min(ZMAX, Math.max(1, P.z0 * dist(a, b) / P.d0));
@@ -406,6 +413,20 @@ export class Pad {
       return;
     }
     if (e.pointerId === this.curId) this.finish();
+  }
+  // Ends every finger still registered (of one kind, or all). A line being drawn is kept;
+  // a pending bucket tap is dropped unless the finger really lifted.
+  releaseAll(type = 'pointercancel', kind) {
+    for (const [id, p] of [...this.pts]) if (!kind || p.type === kind) this.up({ pointerId: id, type });
+    if (!this.pts.size) { this.pinch = null; this.gesture = false; this.snap = null; }
+  }
+  touchSync(e) {
+    if (e.targetTouches && e.targetTouches.length) return;
+    // no finger is left on the sheet: whatever is still registered as a touch was missed
+    const ids = [...this.pts].filter(([, p]) => p.type === 'touch').map(([id]) => id);
+    if (!ids.length) return;
+    const type = e.type === 'touchcancel' ? 'pointercancel' : 'pointerup';
+    setTimeout(() => { for (const id of ids) if (this.pts.has(id)) this.up({ pointerId: id, type }); }, 60);
   }
   wheel(e) {
     if (this.locked) return;

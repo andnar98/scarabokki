@@ -371,6 +371,38 @@ button:focus-visible { outline: 3px solid var(--focus); outline-offset: 2px; }
 .dialog h2 { margin: 0; font-family: var(--font-display); font-weight: 800; font-size: 22px; line-height: 1.15; letter-spacing: -.01em; text-wrap: balance; }
 .dialog p { margin: 0 0 8px; color: var(--muted); font-size: 16px; }
 
+/* turn title that opens the game menu */
+.crumb {
+  display: inline-flex; align-items: center; gap: 5px; border: none; background: var(--well); border-radius: 999px;
+  padding: 4px 8px 4px 9px; margin: 0 0 3px -2px; line-height: 1; position: relative;
+  transition: transform .14s var(--ease), background .2s;
+}
+.crumb::before { content: ""; position: absolute; inset: -10px -8px; }
+.crumb::after {
+  content: ""; width: 9px; height: 9px; background: currentColor;
+  -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='3.4' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M5 9l7 7 7-7'/%3E%3C/svg%3E") center / contain no-repeat;
+  mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='3.4' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M5 9l7 7 7-7'/%3E%3C/svg%3E") center / contain no-repeat;
+}
+.crumb:active { transform: scale(.95); background: var(--lilac); }
+
+/* action sheet */
+.menu-list { display: flex; flex-direction: column; background: var(--tray); border-radius: 18px; overflow: hidden; box-shadow: var(--shadow-1); }
+.menu-item {
+  display: flex; flex-direction: column; align-items: flex-start; gap: 3px; text-align: left; border: none; background: transparent;
+  padding: 14px 16px; min-height: 56px; position: relative; transition: background .15s;
+}
+.menu-item + .menu-item::before { content: ""; position: absolute; top: 0; left: 16px; right: 0; height: 1px; background: var(--line); }
+.menu-item:active { background: var(--well); }
+.menu-label { font-family: var(--font-display); font-weight: 800; font-size: 17px; color: var(--focus); }
+.menu-item.danger .menu-label { color: var(--alarm-ink); }
+.menu-detail { font-size: 14px; line-height: 1.35; color: var(--muted); }
+#menuCancel { margin-top: 2px; background: var(--tray); box-shadow: var(--shadow-1); }
+
+/* reveal steps */
+.step-row { display: grid; grid-template-columns: auto 1fr; gap: 8px; }
+.btn.icon { width: 56px; padding: 0; display: grid; place-items: center; background: var(--tray); box-shadow: var(--shadow-1); }
+.btn.icon svg { width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-width: 2.6; stroke-linecap: round; stroke-linejoin: round; }
+
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation-duration: .01ms !important; animation-delay: 0s !important; transition-duration: .01ms !important; scroll-behavior: auto !important; }
 }
@@ -475,7 +507,7 @@ button:focus-visible { outline: 3px solid var(--focus); outline-offset: 2px; }
     <header class="bar">
       <div class="timer" role="timer" aria-label="Tempo rimasto">0:00</div>
       <div class="prompt">
-        <div class="eyebrow" id="writeEyebrow">Turno 1</div>
+        <button class="eyebrow crumb" id="writeEyebrow" type="button" aria-haspopup="dialog">Turno 1</button>
         <h2 class="title" id="writeTitle">Scrivi una frase</h2>
       </div>
       <span></span>
@@ -502,7 +534,7 @@ button:focus-visible { outline: 3px solid var(--focus); outline-offset: 2px; }
     <header class="bar">
       <div class="timer" role="timer" aria-label="Tempo rimasto">0:00</div>
       <div class="prompt">
-        <div class="eyebrow" id="drawEyebrow">Disegna</div>
+        <button class="eyebrow crumb" id="drawEyebrow" type="button" aria-haspopup="dialog">Disegna</button>
         <h2 class="title" id="drawPrompt"></h2>
       </div>
       <button class="done-btn" id="sendDraw" type="button">Fatto</button>
@@ -549,7 +581,7 @@ button:focus-visible { outline: 3px solid var(--focus); outline-offset: 2px; }
     <header class="bar">
       <div class="timer" role="timer" aria-label="Tempo rimasto">0:00</div>
       <div class="prompt">
-        <div class="eyebrow" id="waitEyebrow">Turno 1</div>
+        <button class="eyebrow crumb" id="waitEyebrow" type="button" aria-haspopup="dialog">Turno 1</button>
         <h2 class="title">In attesa degli altri</h2>
       </div>
       <span></span>
@@ -565,6 +597,7 @@ button:focus-visible { outline: 3px solid var(--focus); outline-offset: 2px; }
     <footer class="foot">
       <p class="hint" id="waitHint">Il turno passa appena finiscono tutti o allo scadere del tempo.</p>
       <button class="btn" id="edit" type="button">Modifica</button>
+      <button class="btn ghost" id="endRound" type="button" hidden>Chiudi il turno adesso</button>
     </footer>
   </section>
 
@@ -572,7 +605,7 @@ button:focus-visible { outline: 3px solid var(--focus); outline-offset: 2px; }
   <section class="screen" id="s-reveal" hidden>
     <header class="bar two">
       <div class="prompt">
-        <div class="eyebrow" id="albumEyebrow">Album 1 di 4</div>
+        <button class="eyebrow crumb" id="albumEyebrow" type="button" aria-haspopup="dialog">Album 1 di 4</button>
         <h2 class="title" id="albumTitle">L’album di …</h2>
       </div>
       <button class="btn small" id="share" type="button" hidden>Salva</button>
@@ -581,7 +614,10 @@ button:focus-visible { outline: 3px solid var(--focus); outline-offset: 2px; }
     <div class="feed" id="feed" aria-live="polite"></div>
     <footer class="foot">
       <p class="hint" id="revealHint"></p>
-      <button class="btn primary" id="next" type="button" hidden>Avanti</button>
+      <div class="step-row" id="stepRow" hidden>
+        <button class="btn icon" id="prev" type="button" aria-label="Passaggio precedente"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15 5l-7 7 7 7"/></svg></button>
+        <button class="btn primary" id="next" type="button">Avanti</button>
+      </div>
       <button class="btn primary" id="again" type="button" hidden>Nuova partita</button>
       <button class="btn ghost" id="exitReveal" type="button" hidden>Esci dalla stanza</button>
     </footer>
@@ -598,7 +634,8 @@ button:focus-visible { outline: 3px solid var(--focus); outline-offset: 2px; }
       <ul class="players" id="claimList"></ul>
     </div>
     <footer class="foot">
-      <p class="hint">Altrimenti resta qui: entrerai da solo nella prossima partita.</p>
+      <p class="hint" id="claimWait">Altrimenti resta qui: entrerai da solo nella prossima partita.</p>
+      <input class="input" id="claimName" maxlength="16" autocomplete="nickname" autocapitalize="words" enterkeyhint="done" placeholder="Il tuo nome, per entrare dopo" aria-label="Il tuo nome" hidden>
       <button class="btn ghost" id="claimBack" type="button">Torna all’inizio</button>
     </footer>
   </section>
@@ -622,6 +659,15 @@ button:focus-visible { outline: 3px solid var(--focus); outline-offset: 2px; }
       <button class="btn" id="askNo" type="button">Annulla</button>
       <button class="btn primary" id="askYes" type="button">Conferma</button>
     </div>
+  </div>
+</div>
+
+<div class="scrim" id="menu" hidden>
+  <div class="dialog" role="dialog" aria-modal="true" aria-labelledby="menuTitle">
+    <h2 id="menuTitle"></h2>
+    <p id="menuText" hidden></p>
+    <div class="menu-list" id="menuActions"></div>
+    <button class="btn" id="menuCancel" type="button">Annulla</button>
   </div>
 </div>
 
