@@ -237,12 +237,19 @@ button:focus-visible { outline: 3px solid var(--focus); outline-offset: 2px; }
 
 /* ---------- draw ---------- */
 #s-draw, #s-draw * { touch-action: none; }
-.stage { flex: 1 1 0; min-height: 0; display: flex; align-items: center; justify-content: center; }
+.stage { flex: 1 1 0; min-height: 0; display: flex; align-items: center; justify-content: center; position: relative; }
 .sheet { display: block; background: var(--paper); border-radius: 14px; box-shadow: var(--shadow); }
-#pad { touch-action: none; cursor: crosshair; }
-.sheet-wrap { position: relative; line-height: 0; }
+/* the drawing area paints its own sheet, so the sheet can zoom and turn; it reaches the screen
+   edges and runs under the tools, with a soft edge below the top bar */
+.board {
+  position: absolute; z-index: 0; top: -10px; bottom: -40px;
+  left: calc(-1 * max(16px, env(safe-area-inset-left, 0px))); right: calc(-1 * max(16px, env(safe-area-inset-right, 0px)));
+  -webkit-mask-image: linear-gradient(to bottom, transparent, #000 12px); mask-image: linear-gradient(to bottom, transparent, #000 12px);
+}
+.board canvas { display: block; width: 100%; height: 100%; touch-action: none; cursor: crosshair; }
+#s-draw .bar, #s-draw .tray { position: relative; z-index: 1; }
 .zoom-pill {
-  position: absolute; top: 10px; right: 10px; display: flex; align-items: center; gap: 6px; line-height: 1;
+  position: absolute; z-index: 2; top: 12px; right: 12px; display: flex; align-items: center; gap: 6px; line-height: 1;
   border: none; border-radius: 999px; padding: 0 12px 0 14px; min-height: 36px;
   background: rgba(46, 38, 67, .72); -webkit-backdrop-filter: blur(12px); backdrop-filter: blur(12px);
   color: #FFFFFF; font-weight: 700; font-size: 13px; font-variant-numeric: tabular-nums;
@@ -267,6 +274,33 @@ button:focus-visible { outline: 3px solid var(--focus); outline-offset: 2px; }
 .undo { width: clamp(42px, 12vw, 54px); }
 #sizes { transition: opacity .2s; }
 .filling #sizes { opacity: .35; }
+.tool { position: relative; }
+/* a tiny corner mark: this button has more choices */
+.tool.more::after {
+  content: ""; position: absolute; right: 4px; bottom: 4px; width: 5px; height: 5px; background: currentColor; opacity: .45;
+  clip-path: polygon(100% 0, 100% 100%, 0 100%);
+}
+#sizeBtn .dot { transition: width .2s var(--spring), height .2s var(--spring), background .2s; }
+
+/* popover: a small row of choices above a tool */
+.pop-catch { position: fixed; inset: 0; z-index: 44; }
+.pop {
+  position: fixed; z-index: 45; padding: 6px; border-radius: 20px; background: var(--tray);
+  box-shadow: 0 0 0 .5px var(--edge), 0 12px 32px rgba(80, 60, 140, .22), 0 2px 6px rgba(80, 60, 140, .1);
+  transform-origin: var(--origin, 50%) 100%; animation: pop-in .26s var(--spring);
+}
+.pop.leaving { animation: pop-out .15s ease-in forwards; }
+@keyframes pop-in { from { opacity: 0; transform: translateY(8px) scale(.86); } }
+@keyframes pop-out { to { opacity: 0; transform: translateY(4px) scale(.94); } }
+.pop-row { display: flex; gap: 2px; }
+.pop-item {
+  width: 50px; height: 46px; border: none; border-radius: 14px; background: transparent; display: grid; place-items: center;
+  transition: background .2s var(--ease), transform .14s var(--ease);
+}
+.pop-item:active { transform: scale(.9); }
+.pop-item[aria-pressed="true"] { background: var(--lilac); }
+.pop-item svg { width: 24px; height: 24px; fill: none; stroke: currentColor; stroke-width: 2.2; stroke-linecap: round; stroke-linejoin: round; }
+.pop-item .dot { box-shadow: inset 0 0 0 1px var(--edge); }
 .swatches { display: grid; grid-template-columns: repeat(8, 1fr); gap: 8px; padding: 2px; }
 .sw {
   aspect-ratio: 1; max-width: 100%; width: 100%; border: none; border-radius: 50%; padding: 0;
@@ -540,19 +574,20 @@ button:focus-visible { outline: 3px solid var(--focus); outline-offset: 2px; }
       <button class="done-btn" id="sendDraw" type="button">Fatto</button>
     </header>
     <main class="stage" id="stage">
-      <div class="sheet-wrap">
-        <canvas class="sheet" id="pad" aria-label="Foglio da disegno"></canvas>
-        <button class="zoom-pill" id="zoomReset" type="button" hidden aria-label="Torna al foglio intero">
-          <span id="zoomLevel">100%</span>
-          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></svg>
-        </button>
-      </div>
+      <div class="board"><canvas id="pad" aria-label="Foglio da disegno"></canvas></div>
+      <button class="zoom-pill" id="zoomReset" type="button" hidden aria-label="Raddrizza e mostra tutto il foglio">
+        <span id="zoomLevel">100%</span>
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></svg>
+      </button>
     </main>
     <section class="tray" id="tray" aria-label="Strumenti">
       <div class="tools">
         <div class="group" role="group" aria-label="Strumento">
           <button class="tool" id="pen" type="button" aria-pressed="true" aria-label="Pennarello">
             <svg viewBox="0 0 24 24"><path d="M4 20l1.2-4.6L15.8 4.8a2 2 0 0 1 2.8 0l.6.6a2 2 0 0 1 0 2.8L8.6 18.8z"/><path d="M14 6.6l3.4 3.4"/></svg>
+          </button>
+          <button class="tool more" id="shape" type="button" aria-pressed="false" aria-label="Forme" aria-haspopup="true" aria-expanded="false">
+            <svg viewBox="0 0 24 24" id="shapeIcon"><path d="M3.5 10.5h9v9h-9z"/><circle cx="15.5" cy="8.5" r="5"/></svg>
           </button>
           <button class="tool" id="rub" type="button" aria-pressed="false" aria-label="Gomma">
             <svg viewBox="0 0 24 24"><path d="M9 20h11"/><path d="M4.8 14.6l8.6-8.6a2 2 0 0 1 2.8 0l3 3a2 2 0 0 1 0 2.8L12 19.2H9.4z"/><path d="M9 10.4l5 5"/></svg>
@@ -561,10 +596,8 @@ button:focus-visible { outline: 3px solid var(--focus); outline-offset: 2px; }
             <svg viewBox="0 0 24 24"><path d="M18.5 11.5L11 4 3.6 11.4a2 2 0 0 0 0 2.8l4.7 4.7a2 2 0 0 0 2.8 0z"/><path d="M6 3l4.2 4.2"/><path d="M3 12.8h15.5"/><path d="M21.6 19.4a1.6 1.6 0 1 1-3.2 0c0-1.3 1.6-2.3 1.6-3.6 0 1.3 1.6 2.3 1.6 3.6z"/></svg>
           </button>
         </div>
-        <div class="group" role="group" aria-label="Spessore" id="sizes">
-          <button class="tool" type="button" data-size="0" aria-pressed="false" aria-label="Sottile"><span class="dot s"></span></button>
-          <button class="tool" type="button" data-size="1" aria-pressed="true" aria-label="Medio"><span class="dot m"></span></button>
-          <button class="tool" type="button" data-size="2" aria-pressed="false" aria-label="Grosso"><span class="dot l"></span></button>
+        <div class="group" id="sizes">
+          <button class="tool more" id="sizeBtn" type="button" aria-label="Spessore" aria-haspopup="true" aria-expanded="false"><span class="dot m" id="sizeDot"></span></button>
         </div>
         <div class="group">
           <button class="tool undo" id="undo" type="button" aria-label="Annulla (tieni premuto per annullare di più)" disabled>
@@ -670,6 +703,9 @@ button:focus-visible { outline: 3px solid var(--focus); outline-offset: 2px; }
     <button class="btn" id="menuCancel" type="button">Annulla</button>
   </div>
 </div>
+
+<div class="pop-catch" id="popCatch" hidden></div>
+<div class="pop" id="pop" hidden><div class="pop-row" id="popRow"></div></div>
 
 <script type="module" src="app.js"></script>
 </body>

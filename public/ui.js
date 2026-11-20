@@ -14,6 +14,7 @@ export function showScreen(name) {
     el.hidden = s !== name;
     el.classList.remove('enter');
   }
+  if (closePop) closePop();         // a small menu never outlives its screen
   const el = $('s-' + name);
   void el.offsetWidth;              // restart the entrance animation
   el.classList.add('enter');
@@ -111,6 +112,52 @@ export function menu({ title, text = '', actions }) {
     }
     $('menuCancel').onclick = () => done(null);
     const first = list.querySelector('button'); if (first) first.focus({ preventScroll: true });
+  });
+}
+
+// ---------- popover: a small row of choices just above a button ----------
+// items: [{ value, label, icon (markup) }]  ->  the chosen value, or null
+let closePop = null;
+export function popover(anchor, items, current) {
+  return new Promise(resolve => {
+    const box = $('pop'), row = $('popRow'), catcher = $('popCatch');
+    if (closePop) closePop();
+    row.textContent = '';
+    let settled = false;
+    const done = v => {
+      if (settled) return; settled = true;
+      if (closeTop === close) closeTop = null;
+      if (closePop === close) closePop = null;
+      window.removeEventListener('keydown', onKey);
+      catcher.hidden = true; catcher.onpointerdown = null;
+      anchor.setAttribute('aria-expanded', 'false');
+      box.classList.add('leaving');
+      box._hideT = setTimeout(() => { box.hidden = true; box.classList.remove('leaving'); }, 150);
+      resolve(v);
+    };
+    const close = () => done(null);
+    for (const it of items) {
+      const b = document.createElement('button');
+      b.type = 'button'; b.className = 'pop-item'; b.innerHTML = it.icon;
+      b.setAttribute('aria-label', it.label); b.setAttribute('aria-pressed', it.value === current);
+      b.onclick = () => done(it.value);
+      row.append(b);
+    }
+    clearTimeout(box._hideT); box.classList.remove('leaving'); box.hidden = false; catcher.hidden = false;
+    // above the button, centred on it, inside the screen
+    const a = anchor.getBoundingClientRect(), vw = document.documentElement.clientWidth, w = box.offsetWidth, h = box.offsetHeight;
+    const left = Math.max(12, Math.min(vw - w - 12, a.left + a.width / 2 - w / 2));
+    box.style.left = left + 'px'; box.style.top = Math.max(12, a.top - h - 10) + 'px';
+    box.style.setProperty('--origin', (a.left + a.width / 2 - left) + 'px');
+    // a tap anywhere else only closes it (nothing gets drawn by accident)
+    catcher.onpointerdown = e => { e.preventDefault(); close(); };
+    const onKey = e => { if (e.key === 'Escape') close(); };
+    window.addEventListener('keydown', onKey);
+    if (closeTop) closeTop();
+    closeTop = close; closePop = close;
+    anchor.setAttribute('aria-expanded', 'true');
+    const sel = row.querySelector('[aria-pressed="true"]') || row.firstElementChild;
+    if (sel) sel.focus({ preventScroll: true });
   });
 }
 

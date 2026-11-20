@@ -1,6 +1,6 @@
 import * as net from './net.js';
 import { Pad, COLORS, RATIO, render, replay, sizeCanvas, release, strokesFrom, encode, strokeKey } from './draw.js';
-import { $, screen, showScreen, toast, ask, menu, dismissTop, haptic, syncRows } from './ui.js';
+import { $, screen, showScreen, toast, ask, menu, popover, dismissTop, haptic, syncRows } from './ui.js';
 import { albumBlob } from './album.js';
 
 // ---------------------------------------------------------------------------
@@ -587,7 +587,7 @@ function showTask() {
   const t = S.task; if (!t || !t.ready) return;
   if (t.kind === 'draw') {
     pad.locked = false; show('draw');
-    if (!t.note && !store.get('zoomHint')) { store.set('zoomHint', 1); toast('Con due dita puoi ingrandire e spostare il foglio.', 4500); }
+    if (!t.note && !store.get('viewHint')) { store.set('viewHint', 1); toast('Con due dita puoi ingrandire, ruotare e spostare il foglio.', 4500); }
   }
   else {
     show('write');
@@ -617,11 +617,13 @@ const pad = new Pad($('pad'), $('stage'), {
     quiet(net.del(room(`work/${t.r}/${S.seat}/s/${strokeKey(i)}`)));
     saveLocalDraw(); updUndo();
   },
-  onView(z) {
-    $('zoomReset').hidden = z < 1.01;
-    $('zoomLevel').textContent = Math.round(z * 100) + '%';
-  }
+  onView({ z, deg, home }) {
+    $('zoomReset').hidden = home;
+    $('zoomLevel').textContent = Math.round(z * 100) + '%' + (deg ? ` · ${deg}°` : '');
+  },
+  onSnap() { haptic('light'); }
 });
+if (T.expose) globalThis.__pad = pad;
 function saveLocalDraw() {
   const t = S.task; if (!t) return;
   const obj = {}; pad.strokes.forEach((s, j) => { obj[strokeKey(j)] = encode(s); });
@@ -964,17 +966,30 @@ async function shareAlbum() {
 // ---------------------------------------------------------------------------
 // Static wiring
 // ---------------------------------------------------------------------------
+const SHAPE_ICONS = {
+  any: '<path d="M3.5 10.5h9v9h-9z"/><circle cx="15.5" cy="8.5" r="5"/>',
+  line: '<path d="M5 19L19 5"/>',
+  rect: '<rect x="4.5" y="4.5" width="15" height="15" rx="1.5"/>',
+  ellipse: '<circle cx="12" cy="12" r="7.5"/>',
+  tri: '<path d="M12 4.5l8 14H4z"/>'
+};
+const SHAPE_ITEMS = [
+  { value: 'line', label: 'Linea' }, { value: 'rect', label: 'Rettangolo' },
+  { value: 'ellipse', label: 'Cerchio' }, { value: 'tri', label: 'Triangolo' }
+].map(it => Object.assign(it, { icon: `<svg viewBox="0 0 24 24" aria-hidden="true">${SHAPE_ICONS[it.value]}</svg>` }));
+const SIZE_NAMES = ['Sottile', 'Medio', 'Grosso'];
 function setupDrawTools() {
   const sw = $('swatches'), tray = $('tray');
   const renderTools = () => {
-    $('pen').setAttribute('aria-pressed', pad.tool === 'pen');
-    $('rub').setAttribute('aria-pressed', pad.tool === 'rub');
-    $('fill').setAttribute('aria-pressed', pad.tool === 'fill');
+    for (const t of ['pen', 'shape', 'rub', 'fill']) $(t).setAttribute('aria-pressed', pad.tool === t);
+    $('shapeIcon').innerHTML = SHAPE_ICONS[pad.shape || 'any'];
+    $('shape').setAttribute('aria-label', 'Forme' + (pad.shape ? ': ' + SHAPE_ITEMS.find(i => i.value === pad.shape).label.toLowerCase() : ''));
     tray.classList.toggle('rubbing', pad.tool === 'rub');
     tray.classList.toggle('filling', pad.tool === 'fill');
     tray.style.setProperty('--cur', pad.color);
     [...sw.children].forEach((b, i) => b.setAttribute('aria-checked', COLORS[i][0] === pad.color));
-    [...$('sizes').children].forEach(b => b.setAttribute('aria-pressed', +b.dataset.size === pad.size));
+    $('sizeDot').className = 'dot ' + 'sml'[pad.size];
+    $('sizeBtn').setAttribute('aria-label', 'Spessore: ' + SIZE_NAMES[pad.size].toLowerCase());
   };
   COLORS.forEach(([hex, name]) => {
     const b = document.createElement('button');
@@ -986,10 +1001,23 @@ function setupDrawTools() {
   $('pen').onclick = () => { pad.tool = 'pen'; renderTools(); };
   $('rub').onclick = () => { pad.tool = 'rub'; renderTools(); };
   $('fill').onclick = () => { pad.tool = 'fill'; renderTools(); };
-  $('zoomReset').onclick = () => { pad.releaseAll(); pad.resetView(); };
-  $('sizes').onclick = e => {
-    const b = e.target.closest('[data-size]'); if (!b) return;
-    pad.size = +b.dataset.size; if (pad.tool === 'fill') pad.tool = 'pen';
+  $('zoomReset').onclick = () => { pad.releaseAll(); pad.resetView(true); };
+  // Shapes: the first tap picks the shape tool again; when it is already on, it opens the choices.
+  $('shape').onclick = async () => {
+    if (pad.tool !== 'shape' && pad.shape) { pad.tool = 'shape'; renderTools(); return; }
+    const v = await popover($('shape'), SHAPE_ITEMS, pad.shape);
+    if (!v) return;
+    pad.shape = v; pad.tool = 'shape'; renderTools();
+    if (!store.get('shapeHint')) {
+      store.set('shapeHint', 1);
+      toast('Trascina sul foglio. Quadrati, cerchi e linee dritte si agganciano da soli.', 5000);
+    }
+  };
+  $('sizeBtn').onclick = async () => {
+    const dot = c => `<span class="dot ${c}" style="background:${pad.tool === 'rub' ? 'transparent' : pad.color}"></span>`;
+    const v = await popover($('sizeBtn'), SIZE_NAMES.map((label, i) => ({ value: i, label, icon: dot('sml'[i]) })), pad.size);
+    if (v === null) return;
+    pad.size = v; if (pad.tool === 'fill') pad.tool = 'pen';
     renderTools();
   };
   renderTools();
