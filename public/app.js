@@ -1,6 +1,7 @@
 import * as net from './net.js';
 import { Pad, RATIO, render, sizeCanvas, strokesFrom, encode, strokeKey } from './draw.js';
-import { $, screen, showScreen, toast, ask, menu, dismissTop, haptic, syncRows } from './ui.js';
+import { $, screen, showScreen, toast, ask, menu, lightbox, dismissTop, haptic, syncRows } from './ui.js';
+import { sound, soundOn, setSound } from './sound.js';
 import { kindOf, albumOf, authorOf, roundMs, roundOver } from './game.js';
 import { T, CFG, LETTERS, idea } from './config.js';
 import { store } from './store.js';
@@ -8,7 +9,7 @@ import {
   S, room, noop, quiet, hash, nameOf, isOnline, isGone, isHost, fmt, lobbyIds,
   settingsOf, settings, cleanName, gameKey, avatar, tag
 } from './state.js';
-import { stopReveal, clearFeed, onReveal, renderRevealChrome, revealNext, revealPrev, shareAlbum } from './reveal.js';
+import { stopReveal, clearFeed, onReveal, renderRevealChrome, revealNext, revealPrev, shareAlbum, saveAll } from './reveal.js';
 import { setupDrawTools, blockGestures } from './tools.js';
 
 // The game itself: home, rooms, rounds, timers and the wiring of every button.
@@ -497,6 +498,7 @@ async function startRound(r, live) {
     pad.load(strokes); updUndo();
     $('drawEyebrow').textContent = `Turno ${r + 1} di ${N}`;
     $('drawPrompt').textContent = t.prompt;
+    $('drawPrompt').dataset.len = t.prompt.length > 55 ? 'xl' : t.prompt.length > 32 ? 'l' : '';
   } else {
     if (kind === 'describe') {
       if (src) t.seen = strokesFrom(src.v.s);
@@ -513,7 +515,7 @@ async function startRound(r, live) {
       : 'Il disegno che dovevi descrivere è rimasto vuoto. Scrivi una frase da far disegnare.';
   }
   t.ready = true;
-  haptic('medium');
+  haptic('medium'); sound('round');
   if (S.done[S.seat] === true) { S.submitted = true; showWait(); }
   else showTask();
   if (t.note) toast(t.note);
@@ -527,11 +529,20 @@ function showTask() {
   }
   else {
     show('write');
-    const seen = $('seen');
-    seen.hidden = t.kind !== 'describe'; $('writeNote').hidden = t.kind === 'describe';
+    $('seenBtn').hidden = t.kind !== 'describe'; $('writeNote').hidden = t.kind === 'describe';
     if (t.kind === 'describe') fitSeen();
   }
   tick();
+}
+// The drawing to describe, as big as the screen allows; a tap brings back the keyboard.
+async function zoomSeen() {
+  const t = S.task; if (!t || t.kind !== 'describe') return;
+  const had = document.activeElement === $('phrase');
+  $('phrase').blur();
+  const w = Math.floor(Math.min(window.innerWidth - 24, (window.innerHeight - 90) / RATIO));
+  sizeCanvas($('zoomSheet'), w); render($('zoomSheet'), t.seen || []);
+  await lightbox($('zoomView'));
+  if (had && screen() === 'write') $('phrase').focus({ preventScroll: true });
 }
 function fitSeen() {
   const t = S.task; if (!t || t.kind !== 'describe' || screen() !== 'write') return;
@@ -596,7 +607,7 @@ async function submit(auto) {
     $('phrase').blur();
   }
   S.submitted = true;
-  if (!auto) haptic('success');
+  if (!auto) { haptic('success'); sound('done'); }
   showWait();
   quiet(net.put(room(`done/${t.r}/${S.seat}`), true));
 }
@@ -607,7 +618,22 @@ function unsubmit() {
   showTask();
 }
 
-function showWait() { show('wait'); renderWait(); }
+function showWait() { show('wait'); renderWait(); showMine(); }
+// What this player handed in, shown small while waiting (the drawing, or the sentence).
+function showMine() {
+  const t = S.task, box = $('waitMine');
+  if (!t) { box.hidden = true; return; }
+  const drawing = t.kind === 'draw';
+  const empty = drawing ? !pad.strokes.length : !t.text.trim();
+  box.hidden = empty;
+  if (empty) return;
+  $('waitMineTitle').textContent = drawing ? 'Il tuo disegno' : 'La tua frase';
+  $('waitSheet').hidden = !drawing; $('waitText').hidden = drawing;
+  if (drawing) {
+    const w = Math.floor(Math.min(box.clientWidth - 24, 150));
+    sizeCanvas($('waitSheet'), Math.max(80, w), 2); render($('waitSheet'), pad.strokes);
+  } else $('waitText').textContent = t.text.trim();
+}
 function renderWait() {
   const m = S.meta; if (!m || m.status !== 'playing') return;
   const order = m.order || [], r = m.round;
@@ -657,6 +683,8 @@ function tick() {
       el.classList.toggle('urgent', urgent);
     }
     if (urgent && !t.warned && S.done[S.seat] !== true) { t.warned = true; haptic('warning'); }
+    const sec = Math.ceil(left / 1000);
+    if (sec > 0 && sec <= 5 && t.beep !== sec && S.done[S.seat] !== true) { t.beep = sec; sound('tick'); }
     $('edit').disabled = left < 1500;
     if (left <= 0 && S.autoSent !== m.rkey && S.done[S.seat] !== true) { S.autoSent = m.rkey; submit(true); }
     maybeAdvance(now);
@@ -706,8 +734,16 @@ function maybeTakeHost(now) {
 // Host controls: new game, back to the room, end the round, game menu
 // ---------------------------------------------------------------------------
 async function newGame() {
-  const ok = await ask('Nuova partita?', 'Gli album di questa partita verranno cancellati. Salvate prima quelli che volete tenere.', 'Nuova partita');
-  if (ok) resetToLobby();
+  const pick = await menu({
+    title: 'Nuova partita?',
+    text: 'Gli album di questa partita verranno cancellati per tutti.',
+    actions: [
+      { value: 'save', label: 'Prima salva tutti gli album', detail: 'Poi ti chiedo di nuovo se cominciare.' },
+      { value: 'new', label: 'Nuova partita', danger: true }
+    ]
+  });
+  if (pick === 'save') { if ((await saveAll()) !== false) newGame(); }
+  else if (pick === 'new') resetToLobby();
 }
 // Everyone goes back to the player list; the drawings of this game are deleted.
 function resetToLobby() {
@@ -736,6 +772,7 @@ async function openGameMenu() {
   const actions = [];
   if (host && playing) actions.push({ value: 'end', label: 'Chiudi il turno adesso', detail: 'Chi non ha finito consegna quello che ha fatto finora.' });
   if (host) actions.push({ value: 'lobby', label: 'Torna alla stanza', detail: 'La partita si interrompe: potete aggiungere qualcuno e ricominciare.' });
+  actions.push({ value: 'sound', label: soundOn() ? 'Spegni i suoni' : 'Accendi i suoni', detail: 'Vale solo per questo telefono.' });
   actions.push({ value: 'leave', label: 'Esci dalla partita', danger: true });
   const pick = await menu({
     title: 'Partita ' + S.code,
@@ -746,7 +783,8 @@ async function openGameMenu() {
   else if (pick === 'lobby') {
     const ok = await ask('Tornare alla stanza?', 'La partita si interrompe per tutti e i disegni fatti finora vanno persi.', 'Torna alla stanza', { danger: true });
     if (ok) resetToLobby();
-  } else if (pick === 'leave') leaveRoom();
+  } else if (pick === 'sound') toggleSound();
+  else if (pick === 'leave') leaveRoom();
 }
 
 // ---------------------------------------------------------------------------
@@ -764,6 +802,18 @@ function setupTimes(el, list, key) {
     el.append(b);
   }
 }
+const SPEAKER = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9.5h3.5L12 5v14l-4.5-4.5H4z"/>';
+function renderSound() {
+  const on = soundOn(), b = $('soundBtn');
+  b.innerHTML = SPEAKER + (on ? '<path d="M15.5 9a4.5 4.5 0 0 1 0 6M18 6.5a8 8 0 0 1 0 11"/>' : '<path d="M16 9.5l5 5M21 9.5l-5 5"/>') + '</svg>';
+  b.setAttribute('aria-pressed', on);
+  b.setAttribute('aria-label', on ? 'Suoni accesi: tocca per spegnerli' : 'Suoni spenti: tocca per accenderli');
+}
+function toggleSound() {
+  setSound(!soundOn()); renderSound();
+  if (soundOn()) sound('done');
+  toast(soundOn() ? 'Suoni accesi.' : 'Suoni spenti.');
+}
 async function copyCode() {
   try { await navigator.clipboard.writeText(S.code); toast('Codice copiato.'); } catch (e) {}
 }
@@ -773,6 +823,9 @@ function setupStatic() {
   setupTimes($('drawTimes'), CFG.drawTimes, 'draw');
   setupTimes($('writeTimes'), CFG.writeTimes, 'write');
   $('lobbyCode').onclick = copyCode;
+  $('soundBtn').onclick = toggleSound; renderSound();
+  $('seenBtn').onclick = zoomSeen;
+  $('saveAll').onclick = saveAll;
   // every button answers the finger with a light tap
   document.addEventListener('pointerdown', e => {
     const b = e.target.closest && e.target.closest('button');

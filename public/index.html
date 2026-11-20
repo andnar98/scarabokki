@@ -34,6 +34,7 @@
 <link rel="modulepreload" href="reveal.js">
 <link rel="modulepreload" href="tools.js">
 <link rel="modulepreload" href="album.js">
+<link rel="modulepreload" href="sound.js">
 <style>
 /* Layout: one-screen phone app. Each screen is a column: a top bar, a flexible middle, an action area under the thumb.
    Look: one pastel theme on purpose (lavender to blush paper, butter-yellow actions, plum ink), the same in day and night mode.
@@ -449,7 +450,47 @@ button:focus-visible { outline: 3px solid var(--focus); outline-offset: 2px; }
 .btn.icon { width: 56px; padding: 0; display: grid; place-items: center; background: var(--tray); box-shadow: var(--shadow-1); }
 .btn.icon svg { width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-width: 2.6; stroke-linecap: round; stroke-linejoin: round; }
 
+/* ---------- small additions: zoom on the drawing to describe, long prompts, preview, album finale, sound ---------- */
+.seen-btn { position: relative; border: none; padding: 0; background: none; border-radius: 14px; cursor: zoom-in; transition: transform .14s var(--ease); }
+.seen-btn:active { transform: scale(.98); }
+.zoom-hint {
+  position: absolute; right: 8px; bottom: 8px; display: flex; align-items: center; gap: 5px; line-height: 1;
+  padding: 7px 10px 7px 8px; border-radius: 999px; background: rgba(46, 38, 67, .72); color: #FFFFFF; font-weight: 700; font-size: 13px;
+  -webkit-backdrop-filter: blur(12px); backdrop-filter: blur(12px); pointer-events: none;
+}
+.zoom-hint svg { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-width: 2.6; stroke-linecap: round; stroke-linejoin: round; }
+.lightbox { align-items: center; padding: max(16px, env(safe-area-inset-top, 0px)) 12px max(16px, env(safe-area-inset-bottom, 0px)); flex-direction: column; gap: 12px; background: rgba(46, 38, 67, .62); cursor: zoom-out; }
+.lightbox canvas { display: block; background: var(--paper); border-radius: 14px; box-shadow: var(--shadow); animation: pop .3s var(--spring); }
+.lightbox p { margin: 0; color: #FFFFFF; font-weight: 600; font-size: 14px; opacity: .85; }
+/* a long sentence to draw gets smaller, so the sheet keeps its room */
+.title[data-len="l"] { font-size: clamp(16px, 4.2vw, 19px); }
+.title[data-len="xl"] { font-size: clamp(14px, 3.7vw, 16px); line-height: 1.2; }
+/* what you handed in, while you wait */
+.mine { flex: none; display: flex; flex-direction: column; align-items: center; gap: 8px; padding: 12px; border-radius: 22px; background: var(--tray); box-shadow: var(--shadow-1); }
+.mine .section-title { align-self: stretch; padding-top: 0; }
+.mine .said { align-self: center; box-shadow: none; background: var(--desk); }
+.mine canvas { border-radius: 10px; box-shadow: inset 0 0 0 1px var(--line); }
+/* the end of an album: where it started, where it arrived */
+.finale {
+  position: relative; display: flex; flex-direction: column; gap: 6px; padding: 16px 18px; border-radius: 22px; overflow: hidden;
+  background: linear-gradient(135deg, var(--marker) 0%, #FFC2D4 100%); box-shadow: var(--shadow); animation: pop .5s var(--spring);
+}
+.finale .eyebrow { color: var(--marker-ink); opacity: .7; }
+.finale .from, .finale .to { margin: 0; font-family: var(--font-display); font-weight: 800; line-height: 1.2; overflow-wrap: anywhere; }
+.finale .from { font-size: 17px; opacity: .75; }
+.finale .to { font-size: 22px; }
+.finale .arrow { font-family: var(--font-display); font-weight: 900; font-size: 20px; line-height: 1; opacity: .6; }
+.confetti { position: fixed; inset: 0; pointer-events: none; z-index: 60; overflow: hidden; }
+.confetti i { position: absolute; top: -12px; width: 8px; height: 13px; border-radius: 2px; animation: fall var(--d, 1.4s) cubic-bezier(.2, .6, .4, 1) var(--w, 0s) forwards; }
+@keyframes fall { to { transform: translate(var(--x, 0), 105vh) rotate(var(--r, 540deg)); opacity: .9; } }
+.lobby-actions { display: flex; gap: 8px; align-items: center; }
+/* room for the sound switch next to the code on small phones */
+.lobby-head .room-code { font-size: clamp(30px, 10vw, 40px); }
+.btn.round { width: 44px; padding: 0; display: grid; place-items: center; background: var(--tray); box-shadow: var(--shadow-1); }
+.btn.round svg { width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-width: 2.2; stroke-linecap: round; stroke-linejoin: round; }
+
 @media (prefers-reduced-motion: reduce) {
+  .confetti { display: none; }
   *, *::before, *::after { animation-duration: .01ms !important; animation-delay: 0s !important; transition-duration: .01ms !important; scroll-behavior: auto !important; }
 }
 </style>
@@ -524,7 +565,10 @@ button:focus-visible { outline: 3px solid var(--focus); outline-offset: 2px; }
         <div class="eyebrow">Codice partita</div>
         <button class="room-code" id="lobbyCode" type="button" aria-label="Copia il codice">····</button>
       </div>
-      <button class="btn small primary" id="invite" type="button">Invita</button>
+      <div class="lobby-actions">
+        <button class="btn round" id="soundBtn" type="button" aria-pressed="true" aria-label="Suoni"></button>
+        <button class="btn small primary" id="invite" type="button">Invita</button>
+      </div>
     </header>
     <div class="lobby-body">
       <div class="section-title"><span>Giocatori</span><span id="count">0/20</span></div>
@@ -559,7 +603,10 @@ button:focus-visible { outline: 3px solid var(--focus); outline-offset: 2px; }
       <span></span>
     </header>
     <div class="write-stage" id="writeStage">
-      <canvas class="sheet" id="seen" aria-label="Disegno da descrivere" hidden></canvas>
+      <button class="seen-btn" id="seenBtn" type="button" aria-label="Ingrandisci il disegno da descrivere" hidden>
+        <canvas class="sheet" id="seen"></canvas>
+        <span class="zoom-hint" aria-hidden="true"><svg viewBox="0 0 24 24"><circle cx="10.5" cy="10.5" r="6.5"/><path d="M15.5 15.5L20 20M10.5 7.5v6M7.5 10.5h6"/></svg>Ingrandisci</span>
+      </button>
       <div class="write-note" id="writeNote">
         <svg viewBox="0 0 120 90" aria-hidden="true"><path d="M14 70 C 30 40, 44 76, 60 46 S 92 30, 106 20"/><path d="M96 14 l14 4 -6 13"/></svg>
         <span id="writeNoteText">Qualcosa di divertente da far disegnare a chi viene dopo di te.</span>
@@ -637,6 +684,11 @@ button:focus-visible { outline: 3px solid var(--focus); outline-offset: 2px; }
         <div><strong>Consegnato</strong><span id="waitCount">1 di 4 hanno finito</span></div>
       </div>
       <div class="meter" aria-hidden="true"><i id="waitMeter" style="width:0%"></i></div>
+      <div class="mine" id="waitMine" hidden>
+        <div class="section-title"><span id="waitMineTitle">Hai consegnato</span></div>
+        <canvas id="waitSheet" aria-label="Il tuo disegno"></canvas>
+        <p class="said" id="waitText"></p>
+      </div>
       <ul class="players" id="waitPlayers"></ul>
     </div>
     <footer class="foot">
@@ -663,6 +715,7 @@ button:focus-visible { outline: 3px solid var(--focus); outline-offset: 2px; }
         <button class="btn icon" id="prev" type="button" aria-label="Passaggio precedente"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15 5l-7 7 7 7"/></svg></button>
         <button class="btn primary" id="next" type="button">Avanti</button>
       </div>
+      <button class="btn" id="saveAll" type="button" hidden>Salva tutti gli album</button>
       <button class="btn primary" id="again" type="button" hidden>Nuova partita</button>
       <button class="btn ghost" id="exitReveal" type="button" hidden>Esci dalla stanza</button>
     </footer>
@@ -714,6 +767,11 @@ button:focus-visible { outline: 3px solid var(--focus); outline-offset: 2px; }
     <div class="menu-list" id="menuActions"></div>
     <button class="btn" id="menuCancel" type="button">Annulla</button>
   </div>
+</div>
+
+<div class="scrim lightbox" id="zoomView" hidden role="dialog" aria-modal="true" aria-label="Disegno ingrandito">
+  <canvas id="zoomSheet"></canvas>
+  <p>Tocca per tornare a scrivere</p>
 </div>
 
 <div class="pop-catch" id="popCatch" hidden></div>

@@ -95,6 +95,13 @@ export function ask(title, text, yes = 'Conferma', { danger = false } = {}) {
     y.focus({ preventScroll: true });
   });
 }
+// A full-screen view (like the enlarged drawing): a tap anywhere, Escape or back closes it.
+export function lightbox(box) {
+  return new Promise(resolve => {
+    const done = sheet(box, null, resolve);
+    box.onclick = () => done(null);
+  });
+}
 // actions: [{ value, label, detail?, danger? }]  ->  the chosen value, or null
 export function menu({ title, text = '', actions }) {
   return new Promise(resolve => {

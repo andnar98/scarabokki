@@ -36,6 +36,16 @@ export function verbs(drawn) {
   });
 }
 
+// The "before and after" of an album: the first sentence and the last sentence it turned into.
+// texts[k] is the sentence of step k ('' for drawings and empty steps). Null when there is
+// nothing to compare (no first sentence, no later sentence, or nothing changed).
+export function finale(texts) {
+  const from = (texts[0] || '').trim();
+  let to = '';
+  for (let k = 2; k < texts.length; k += 2) if ((texts[k] || '').trim()) to = texts[k].trim();
+  return from && to && to.toLowerCase() !== from.toLowerCase() ? { from, to } : null;
+}
+
 // Reveal position: album c, showing its first s steps; fin once every album has been shown.
 export function nextReveal(rv, N) {
   if (rv.s < N) return { c: rv.c, s: rv.s + 1 };

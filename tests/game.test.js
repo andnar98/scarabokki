@@ -1,7 +1,7 @@
 // Game rules: albums, rounds and the reveal.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { kindOf, albumOf, authorOf, roundMs, roundOver, nextReveal, prevReveal, verbs } from '../public/game.js';
+import { kindOf, albumOf, authorOf, roundMs, roundOver, nextReveal, prevReveal, verbs, finale } from '../public/game.js';
 
 const players = n => Array.from({ length: n }, (_, i) => 'p' + i);
 
@@ -103,4 +103,12 @@ test('chi non aveva nessun disegno da guardare “ha scritto” una frase nuova'
   // un disegno vecchio basta: si descrive quello
   assert.deepEqual(verbs([false, true, false, false, false]),
     [' ha scritto', ' ha disegnato', ' ha visto', ' ha disegnato', ' ha visto']);
+});
+
+test('“prima e dopo”: dalla prima frase all’ultima frase dell’album', () => {
+  assert.deepEqual(finale(['Un pinguino al mare', '', 'Un uccello', '', 'Un frigorifero']), { from: 'Un pinguino al mare', to: 'Un frigorifero' });
+  assert.deepEqual(finale(['Un gatto', '', 'Un cane', '', '']), { from: 'Un gatto', to: 'Un cane' }, 'una frase finale vuota si salta');
+  assert.equal(finale(['Un gatto', '']), null, 'con due giocatori non c’è una frase finale');
+  assert.equal(finale(['', '', 'Un cane']), null, 'senza frase iniziale non c’è confronto');
+  assert.equal(finale(['Un gatto', '', 'un GATTO']), null, 'se è rimasta uguale non c’è sorpresa');
 });
