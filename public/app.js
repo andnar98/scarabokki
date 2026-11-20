@@ -2,6 +2,7 @@ import * as net from './net.js';
 import { Pad, COLORS, RATIO, render, replay, sizeCanvas, release, strokesFrom, encode, strokeKey } from './draw.js';
 import { $, screen, showScreen, toast, ask, menu, popover, dismissTop, haptic, syncRows } from './ui.js';
 import { albumBlob } from './album.js';
+import { kindOf, albumOf, authorOf, roundOver, nextReveal, prevReveal } from './game.js';
 
 // ---------------------------------------------------------------------------
 // Settings
@@ -78,7 +79,6 @@ function isGone(seat, now) {
 const isHost = () => !!S.meta && S.meta.host === S.seat;
 const fmt = ms => { const s = Math.max(0, Math.ceil(ms / 1000)); return Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0'); };
 const lobbyIds = () => Object.keys(S.players).sort((a, b) => (S.players[a].joined || 0) - (S.players[b].joined || 0) || (a < b ? -1 : 1));
-const kindOf = r => (r === 0 ? 'first' : r % 2 ? 'draw' : 'describe');
 const settings = () => Object.assign({}, CFG.defaults, (S.meta && S.meta.settings) || {});
 const gameKey = () => (S.meta && S.meta.game) || 0;
 
@@ -108,7 +108,7 @@ const ICONS = {
 };
 // Title card between rounds: says what is coming while the round loads.
 function intro(r, n) {
-  const kind = r === 0 ? 'write' : r % 2 ? 'draw' : 'describe';
+  const kind = r === 0 ? 'write' : kindOf(r);
   $('spinner').hidden = true; $('loadingText').hidden = true;
   $('introIcon').innerHTML = ICONS[kind];
   $('introEyebrow').textContent = `Turno ${r + 1} di ${n}`;
@@ -523,10 +523,10 @@ const localKey = r => `work.${S.code}.${gameKey()}.${r}`;
 // The entry this player works from: the previous one in the chain, or, if that one
 // was left empty, the last non-empty entry of the same type.
 async function findSource(c, r) {
-  const m = S.meta, order = m.order, N = order.length;
+  const order = S.meta.order;
   const want = r % 2 ? 'text' : 'drawing';
   for (let k = r - 1; k >= 0; k -= 2) {
-    const by = order[((c - k) % N + N) % N];
+    const by = authorOf(order, c, k);
     const v = await net.get(room(`work/${k}/${by}`));
     if (!isEmpty(v, want)) return { by, v, k };
   }
@@ -535,8 +535,8 @@ async function findSource(c, r) {
 
 async function startRound(r, live) {
   const token = ++S.roundToken;
-  const m = S.meta, order = m.order, N = order.length, i = order.indexOf(S.seat);
-  const c = (i + r) % N;
+  const m = S.meta, order = m.order, N = order.length;
+  const c = albumOf(order, S.seat, r);
   let kind = kindOf(r);
   S.roundKey = m.rkey; S.submitted = false; S.autoSent = null;
   const set = settings(), span = (r % 2 ? set.draw : set.write) * 1000;
@@ -744,12 +744,8 @@ function tick() {
 function maybeAdvance(now) {
   const m = S.meta;
   if (!m || m.status !== 'playing' || !S.task || !(m.order || []).includes(S.seat)) return;
-  const order = m.order, done = S.done;
-  const all = order.every(s => done[s] === true);
-  const timeUp = now > m.endsAt + CFG.grace;
-  const someone = order.some(s => done[s] === true);
-  const restGone = S.presenceLoaded && order.every(s => done[s] === true || isGone(s, now));
-  if (all || timeUp || (someone && restGone)) advance(m.round);
+  if (roundOver({ order: m.order, done: S.done, now, endsAt: m.endsAt, grace: CFG.grace,
+    presenceLoaded: S.presenceLoaded, gone: s => isGone(s, now) })) advance(m.round);
 }
 async function advance(r) {
   if (S.advancing === r) return;
@@ -799,7 +795,7 @@ function chainEntries(c) {
   if (S.rv.cache[key]) return S.rv.cache[key];
   const order = m.order, N = m.n;
   const p = Promise.all(Array.from({ length: N }, (_, k) => {
-    const by = order[((c - k) % N + N) % N];
+    const by = authorOf(order, c, k);
     return net.get(room(`work/${k}/${by}`)).then(v => ({ k, by, v }), () => ({ k, by, v: null, failed: true }));
   })).then(list => { if (list.some(e => e.failed)) delete S.rv.cache[key]; return list; });
   S.rv.cache[key] = p;
@@ -889,20 +885,13 @@ function renderRevealChrome() {
 }
 function revealNext() {
   const m = S.meta; if (!m || !isHost()) return;
-  const rv = m.reveal || { c: 0, s: 1 }, N = m.n;
-  let nv;
-  if (rv.s < N) nv = { c: rv.c, s: rv.s + 1 };
-  else if (rv.c < N - 1) nv = { c: rv.c + 1, s: 1 };
-  else nv = { c: rv.c, s: N, fin: true };
+  const nv = nextReveal(m.reveal || { c: 0, s: 1 }, m.n);
   quiet(net.patch(room('meta'), { reveal: nv, at: net.now() }));
 }
 function revealPrev() {
   const m = S.meta; if (!m || !isHost()) return;
-  const rv = m.reveal || { c: 0, s: 1 }, N = m.n;
-  let nv;
-  if (rv.s > 1) nv = { c: rv.c, s: rv.s - 1 };
-  else if (rv.c > 0) nv = { c: rv.c - 1, s: N };
-  else return;
+  const nv = prevReveal(m.reveal || { c: 0, s: 1 }, m.n);
+  if (!nv) return;
   quiet(net.patch(room('meta'), { reveal: nv, at: net.now() }));
 }
 async function newGame() {
