@@ -1,11 +1,22 @@
-# Publishes the site to Firebase Hosting every time something lands on main.
+# Every time something lands on main: run the tests, and publish the site only if they pass.
 name: Pubblica su Firebase
 on:
   push:
     branches:
       - main
 jobs:
+  test:
+    name: Controlla il gioco
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+      - run: npm test
   deploy:
+    name: Pubblica
+    needs: test
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
