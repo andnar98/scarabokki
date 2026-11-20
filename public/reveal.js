@@ -2,8 +2,8 @@ import * as net from './net.js';
 import { render, replay, sizeCanvas, release, strokesFrom } from './draw.js';
 import { $, showScreen, toast, haptic } from './ui.js';
 import { albumBlob } from './album.js';
-import { authorOf, nextReveal, prevReveal } from './game.js';
-import { S, room, quiet, nameOf, colorOf, isHost, gameKey, avatar, verbOf, textOf } from './state.js';
+import { authorOf, nextReveal, prevReveal, verbs } from './game.js';
+import { S, room, quiet, nameOf, colorOf, isHost, gameKey, avatar, textOf } from './state.js';
 
 // ---------------------------------------------------------------------------
 // Reveal: the host steps through every album, everyone sees the same thing
@@ -44,7 +44,8 @@ export async function onReveal() {
   if (fresh) { clearFeed(); S.rv.key = viewKey; S.rv.shown = 0; }
   const from = S.rv.shown, to = pos.s;
   if (to < from) { clearFeed(); S.rv.shown = 0; return onReveal(); }
-  for (let k = from; k < to; k++) feed.append(entryEl(entries[k], k === to - 1 && !pos.fin && !fresh));
+  const said = verbsOf(entries);
+  for (let k = from; k < to; k++) feed.append(entryEl(entries[k], said[k], k === to - 1 && !pos.fin && !fresh));
   if (to > from && !fresh && !isHost()) haptic('light');
   S.rv.shown = to;
   requestAnimationFrame(() => {
@@ -53,13 +54,15 @@ export async function onReveal() {
     else if (fresh) feed.scrollTop = pos.fin ? 0 : feed.scrollHeight;
   });
 }
-export function entryEl(e, animate) {
+// What each step says next to the name ("ha disegnato", "ha visto", "ha scritto").
+const verbsOf = entries => verbs(entries.map(e => e.k % 2 === 1 && strokesFrom(e.v && e.v.s).length > 0));
+export function entryEl(e, verb, animate) {
   const el = document.createElement('article');
   el.className = 'entry';
   const who = document.createElement('div'); who.className = 'who';
   const b = document.createElement('b'); b.textContent = nameOf(e.by);
   const drawing = e.k % 2 === 1;
-  who.append(avatar(e.by, true), b, document.createTextNode(verbOf(e.k)));
+  who.append(avatar(e.by, true), b, document.createTextNode(verb));
   el.append(who);
   if (drawing) {
     const strokes = strokesFrom(e.v && e.v.s);
@@ -125,10 +128,11 @@ export async function shareAlbum() {
   const btn = $('share'); if (btn.disabled) return;
   btn.disabled = true; btn.classList.add('busy');
   try {
+    const entries = await chainEntries(c), said = verbsOf(entries);
     const blob = await albumBlob({
       code: S.code, title: 'L’album di ' + who,
-      entries: (await chainEntries(c)).map(e => ({
-        label: nameOf(e.by) + verbOf(e.k), color: colorOf(e.by), drawing: e.k % 2 === 1,
+      entries: entries.map(e => ({
+        label: nameOf(e.by) + said[e.k], color: colorOf(e.by), drawing: e.k % 2 === 1,
         text: textOf(e), strokes: e.k % 2 === 1 ? strokesFrom(e.v && e.v.s) : []
       }))
     });

@@ -25,6 +25,17 @@ export function roundOver({ order, done, now, endsAt, grace, presenceLoaded, gon
   return order.some(finished) && presenceLoaded && order.every(s => finished(s) || gone(s));
 }
 
+// What each step of an album says next to the player's name. A text step after the first one
+// describes a drawing, unless every drawing before it was left blank: then the player wrote
+// a brand new sentence. `drawn[k]` tells whether step k is a drawing with something on it.
+export function verbs(drawn) {
+  let seen = false;
+  return drawn.map((d, k) => {
+    if (k % 2) { seen = seen || d; return ' ha disegnato'; }
+    return k > 0 && seen ? ' ha visto' : ' ha scritto';
+  });
+}
+
 // Reveal position: album c, showing its first s steps; fin once every album has been shown.
 export function nextReveal(rv, N) {
   if (rv.s < N) return { c: rv.c, s: rv.s + 1 };

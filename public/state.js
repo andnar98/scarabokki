@@ -40,5 +40,4 @@ export function avatar(seat, small) {
   return el;
 }
 export function tag(text, cls) { const t = document.createElement('span'); t.className = 'tagp' + (cls ? ' ' + cls : ''); t.textContent = text; return t; }
-export const verbOf = k => (k % 2 ? ' ha disegnato' : k === 0 ? ' ha scritto' : ' ha visto');
 export const textOf = e => (e.v && typeof e.v.t === 'string' ? e.v.t.trim() : '');

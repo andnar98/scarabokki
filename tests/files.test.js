@@ -47,6 +47,10 @@ test('le pagine e le icone indicate esistono', () => {
   for (const [, href] of html.matchAll(/(?:href|src)="([\w.-]+\.(?:js|png|svg|webmanifest))"/g)) {
     assert.ok(existsSync(new URL('public/' + href, root)), `index.html usa ${href}, che manca`);
   }
+  for (const [, font] of html.matchAll(/url\((fonts\/[\w.-]+\.woff2)\)/g)) {
+    assert.ok(existsSync(new URL('public/' + font, root)), `index.html usa ${font}, che manca`);
+  }
+  assert.ok(!html.includes('fonts.googleapis.com'), 'i caratteri devono arrivare dal sito, non da Google Fonts');
   for (const icon of JSON.parse(read('public/manifest.webmanifest')).icons) {
     assert.ok(existsSync(new URL('public/' + icon.src, root)), `manca l’icona ${icon.src}`);
   }

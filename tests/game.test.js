@@ -1,7 +1,7 @@
 // Game rules: albums, rounds and the reveal.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { kindOf, albumOf, authorOf, roundMs, roundOver, nextReveal, prevReveal } from '../public/game.js';
+import { kindOf, albumOf, authorOf, roundMs, roundOver, nextReveal, prevReveal, verbs } from '../public/game.js';
 
 const players = n => Array.from({ length: n }, (_, i) => 'p' + i);
 
@@ -89,4 +89,18 @@ test('“Indietro” annulla “Avanti” e si ferma all’inizio', () => {
     rv = next;
   }
   assert.equal(prevReveal({ c: 0, s: 1 }, N), null);
+});
+
+test('negli album: “ha scritto”, “ha disegnato”, “ha visto”', () => {
+  assert.deepEqual(verbs([false, true, false, true, false]),
+    [' ha scritto', ' ha disegnato', ' ha visto', ' ha disegnato', ' ha visto']);
+});
+
+test('chi non aveva nessun disegno da guardare “ha scritto” una frase nuova', () => {
+  // il primo disegno è rimasto bianco: il turno dopo si scrive una frase nuova
+  assert.deepEqual(verbs([false, false, false, true, false]),
+    [' ha scritto', ' ha disegnato', ' ha scritto', ' ha disegnato', ' ha visto']);
+  // un disegno vecchio basta: si descrive quello
+  assert.deepEqual(verbs([false, true, false, false, false]),
+    [' ha scritto', ' ha disegnato', ' ha visto', ' ha disegnato', ' ha visto']);
 });
