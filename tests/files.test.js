@@ -22,6 +22,26 @@ test('ogni file importato esiste davvero', () => {
   }
 });
 
+test('ogni nome importato da un file del sito è davvero esportato da quel file', () => {
+  const exported = f => {
+    const src = read('public/' + f), names = new Set();
+    for (const [, n] of src.matchAll(/export\s+(?:async\s+)?(?:function\*?|class|const|let|var)\s+([\w$]+)/g)) names.add(n);
+    for (const [, list] of src.matchAll(/export\s*\{([^}]*)\}/g)) {
+      for (const part of list.split(',')) { const n = part.trim().split(/\s+as\s+/).pop(); if (n) names.add(n); }
+    }
+    return names;
+  };
+  for (const f of readdirSync(new URL('public/', root)).filter(f => f.endsWith('.js'))) {
+    for (const [, list, dep] of read('public/' + f).matchAll(/import\s*\{([^}]*)\}\s*from\s*'\.\/([\w.-]+)'/g)) {
+      const have = exported(dep);
+      for (const part of list.split(',')) {
+        const n = part.trim().split(/\s+as\s+/)[0];
+        if (n) assert.ok(have.has(n), `${f} importa ${n} da ${dep}, ma ${dep} non lo esporta`);
+      }
+    }
+  }
+});
+
 test('le pagine e le icone indicate esistono', () => {
   const html = read('public/index.html');
   for (const [, href] of html.matchAll(/(?:href|src)="([\w.-]+\.(?:js|png|svg|webmanifest))"/g)) {

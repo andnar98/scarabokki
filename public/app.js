@@ -1,100 +1,22 @@
 import * as net from './net.js';
-import { Pad, COLORS, RATIO, render, replay, sizeCanvas, release, strokesFrom, encode, strokeKey } from './draw.js';
-import { $, screen, showScreen, toast, ask, menu, popover, dismissTop, haptic, syncRows } from './ui.js';
-import { albumBlob } from './album.js';
-import { kindOf, albumOf, authorOf, roundMs, roundOver, nextReveal, prevReveal } from './game.js';
+import { Pad, RATIO, render, sizeCanvas, strokesFrom, encode, strokeKey } from './draw.js';
+import { $, screen, showScreen, toast, ask, menu, dismissTop, haptic, syncRows } from './ui.js';
+import { kindOf, albumOf, authorOf, roundMs, roundOver } from './game.js';
+import { T, CFG, LETTERS, idea } from './config.js';
+import { store } from './store.js';
+import {
+  S, room, noop, quiet, hash, nameOf, isOnline, isGone, isHost, fmt, lobbyIds,
+  settingsOf, settings, cleanName, gameKey, avatar, tag
+} from './state.js';
+import { stopReveal, clearFeed, onReveal, renderRevealChrome, revealNext, revealPrev, shareAlbum } from './reveal.js';
+import { setupDrawTools, blockGestures } from './tools.js';
+
+// The game itself: home, rooms, rounds, timers and the wiring of every button.
+// The other parts live in their own files: config, store, state, reveal (albums), tools (drawing toolbar).
 
 // ---------------------------------------------------------------------------
-// Settings
+// Screens
 // ---------------------------------------------------------------------------
-const T = globalThis.__SCARA_TEST || {};
-const CFG = {
-  maxPlayers: 20, minPlayers: 2, nameMax: 16, textMax: 80,
-  grace: 3000,                     // after the deadline, wait this long for last saves before moving on
-  intro: 1200,                     // every round starts with a short title card; the clock allows for it
-  gone: T.gone ?? 30000,           // a player offline this long no longer holds up the round
-  hostGone: T.hostGone ?? 30000,   // the host offline this long hands control to the next player
-  drawTimes: [60, 90, 120, 180],
-  writeTimes: [30, 45, 60, 90],
-  defaults: { draw: 90, write: 45 }
-};
-const LETTERS = 'ABCDEFGHJKLMNPQRSTUVWXYZ';
-const AV = ['#FFB3BA', '#FFCFA3', '#FFE58F', '#C5F0A4', '#A8E6CF', '#9EDCF5', '#A9C5FF', '#C7B8FF', '#F2B5F0', '#FFC2D4', '#E3CDB0', '#B8E0D2'];
-const IDEAS = [
-  'Un pinguino che vende gelati al Polo Nord', 'Un gatto astronauta che ha perso le chiavi', 'La nonna che fa skateboard',
-  'Una pizza innamorata di un ananas', 'Un dinosauro dal parrucchiere', 'Una mucca che fa yoga al tramonto',
-  'Il Wi-Fi che non prende', 'Un fantasma che ha paura del buio', 'Una giraffa in ascensore',
-  'Un riccio che abbraccia un palloncino', 'Il lunedì mattina', 'Una banana in fuga dalla polizia',
-  'Un polpo che suona la batteria', 'Babbo Natale in infradito', 'Un vampiro dal dentista',
-  'Una lumaca alla Formula 1', 'Un cane che porta a spasso il padrone', 'La Torre di Pisa che si raddrizza',
-  'Un robot che piange guardando un film', 'Una tartaruga con il jetpack', 'Un panino gigante che mangia una persona',
-  'Un orso che fa la spesa', 'Il sole che va in vacanza', 'Una sirena in metropolitana',
-  'Un gufo che fa il DJ', 'Un supereroe con il raffreddore', 'Una pecora che conta gli umani per dormire',
-  'Il caffè che si sveglia da solo', 'Un elefante sulle punte', 'Un alieno che ordina un kebab',
-  'Una scarpa che scappa dal piede', 'Il gatto che si siede sulla tastiera', 'Un cactus che vuole un abbraccio',
-  'Una mummia che fa il bucato', 'Un pirata con il mal di mare', 'Un cervello che va in palestra',
-  'La luna che si mangia una fetta di formaggio', 'Un fenicottero che gioca a calcio', 'Il frigorifero che russa',
-  'Un mago a cui sparisce il coniglio'
-];
-
-// ---------------------------------------------------------------------------
-// State and small helpers
-// ---------------------------------------------------------------------------
-const S = {
-  uid: null, code: null, seat: null, attachedAt: 0,
-  meta: null, players: {}, presence: {}, presenceLoaded: false, done: {},
-  subs: [], doneSub: null, doneKey: null, tick: 0,
-  roundKey: null, roundToken: 0, task: null, submitted: false, autoSent: null,
-  advancing: null, hosting: false, connected: true,
-  rv: { key: null, chain: -1, shown: 0, browse: null, cache: {}, stops: [] },
-  claimSubs: []
-};
-const room = p => 'rooms/' + S.code + (p ? '/' + p : '');
-const store = {
-  get(k, d = null) { try { const v = localStorage.getItem('scarabokki.' + k); return v === null ? d : JSON.parse(v); } catch (e) { return d; } },
-  set(k, v) { try { localStorage.setItem('scarabokki.' + k, JSON.stringify(v)); } catch (e) {} },
-  del(k) { try { localStorage.removeItem('scarabokki.' + k); } catch (e) {} },
-  // Removes every drawing/text backup except `keep`, so old games never pile up in the browser.
-  prune(keep) {
-    try {
-      const old = [];
-      for (let i = 0; i < localStorage.length; i++) {
-        const k = localStorage.key(i);
-        if (k && k.startsWith('scarabokki.work.') && k !== 'scarabokki.' + keep) old.push(k);
-      }
-      old.forEach(k => localStorage.removeItem(k));
-    } catch (e) {}
-  }
-};
-const noop = () => {};
-const quiet = p => (p && p.catch ? p.catch(err => console.warn('[scarabokki]', err && (err.code || err.message))) : p);
-function hash(str) { let h = 2166136261; for (let i = 0; i < str.length; i++) { h ^= str.charCodeAt(i); h = Math.imul(h, 16777619); } return h >>> 0; }
-const nameOf = seat => (S.players[seat] && S.players[seat].name) || 'Qualcuno';
-const colorOf = seat => AV[hash(String(seat)) % AV.length];
-const isOnline = seat => !!(S.presence[seat] && S.presence[seat].on);
-function isGone(seat, now) {
-  const p = S.presence[seat];
-  return !p || (!p.on && now - (p.at || 0) > CFG.gone);
-}
-const isHost = () => !!S.meta && S.meta.host === S.seat;
-const fmt = ms => { const s = Math.max(0, Math.ceil(ms / 1000)); return Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0'); };
-const lobbyIds = () => Object.keys(S.players).sort((a, b) => (S.players[a].joined || 0) - (S.players[b].joined || 0) || (a < b ? -1 : 1));
-const settingsOf = m => Object.assign({}, CFG.defaults, (m && m.settings) || {});
-const settings = () => settingsOf(S.meta);
-// A name as typed: no spaces at the ends, single spaces inside, not too long.
-const cleanName = s => s.trim().replace(/\s+/g, ' ').slice(0, CFG.nameMax);
-const gameKey = () => (S.meta && S.meta.game) || 0;
-
-function avatar(seat, small) {
-  const el = document.createElement('span');
-  el.className = 'av' + (small ? ' sm' : '');
-  el.style.setProperty('--av', colorOf(seat));
-  el.textContent = (nameOf(seat).trim()[0] || '?').toUpperCase();
-  el.setAttribute('aria-hidden', 'true');
-  if (!isOnline(seat)) el.dataset.off = '';
-  return el;
-}
-function tag(text, cls) { const t = document.createElement('span'); t.className = 'tagp' + (cls ? ' ' + cls : ''); t.textContent = text; return t; }
 
 function show(name) {
   if (!showScreen(name)) return;
@@ -119,8 +41,6 @@ function intro(r, n) {
   $('intro').hidden = false; show('loading');
 }
 const wait = ms => new Promise(res => setTimeout(res, ms));
-const verbOf = k => (k % 2 ? ' ha disegnato' : k === 0 ? ' ha scritto' : ' ha visto');
-const textOf = e => (e.v && typeof e.v.t === 'string' ? e.v.t.trim() : '');
 
 // ---------------------------------------------------------------------------
 // Device: viewport, wake lock, connection banner
@@ -519,7 +439,6 @@ async function startGame() {
 // ---------------------------------------------------------------------------
 // Rounds
 // ---------------------------------------------------------------------------
-function idea(seed) { return IDEAS[(seed === undefined ? Math.floor(Math.random() * 1e9) : seed) % IDEAS.length]; }
 const isEmpty = (v, kind) => !v || (kind === 'text' ? !(typeof v.t === 'string' && v.t.trim()) : !strokesFrom(v.s).length);
 const localKey = r => `work.${S.code}.${gameKey()}.${r}`;
 
@@ -784,119 +703,8 @@ function maybeTakeHost(now) {
 }
 
 // ---------------------------------------------------------------------------
-// Reveal: the host steps through every album, everyone sees the same thing
+// Host controls: new game, back to the room, end the round, game menu
 // ---------------------------------------------------------------------------
-function stopReveal() { (S.rv.stops || []).forEach(f => f()); S.rv.stops = []; }
-function clearFeed() {
-  stopReveal();
-  const feed = $('feed');
-  for (const cv of feed.querySelectorAll('canvas')) release(cv);
-  feed.textContent = '';
-}
-function chainEntries(c) {
-  const m = S.meta, key = gameKey() + ':' + c;
-  if (S.rv.cache[key]) return S.rv.cache[key];
-  const order = m.order, N = m.n;
-  const p = Promise.all(Array.from({ length: N }, (_, k) => {
-    const by = authorOf(order, c, k);
-    return net.get(room(`work/${k}/${by}`)).then(v => ({ k, by, v }), () => ({ k, by, v: null, failed: true }));
-  })).then(list => { if (list.some(e => e.failed)) delete S.rv.cache[key]; return list; });
-  S.rv.cache[key] = p;
-  return p;
-}
-function revealPos() {
-  const m = S.meta, N = m.n, rv = m.reveal || { c: 0, s: 1 };
-  if (rv.fin) return { c: S.rv.browse !== null && S.rv.browse < N ? S.rv.browse : Math.min(rv.c, N - 1), s: N, fin: true };
-  return { c: Math.min(rv.c, N - 1), s: Math.max(1, Math.min(rv.s, N)), fin: false };
-}
-async function onReveal() {
-  show('reveal');
-  const m = S.meta, pos = revealPos(), N = m.n;
-  renderRevealChrome();
-  const viewKey = gameKey() + ':' + pos.c;
-  const fresh = S.rv.key !== viewKey;
-  const entries = await chainEntries(pos.c);
-  if (S.meta !== m && revealPos().c !== pos.c) return;   // moved on while loading
-  if (pos.c + 1 < N) chainEntries(pos.c + 1);            // prefetch the next album
-  const feed = $('feed');
-  if (fresh) { clearFeed(); S.rv.key = viewKey; S.rv.shown = 0; }
-  const from = S.rv.shown, to = pos.s;
-  if (to < from) { clearFeed(); S.rv.shown = 0; return onReveal(); }
-  for (let k = from; k < to; k++) feed.append(entryEl(entries[k], k === to - 1 && !pos.fin && !fresh));
-  if (to > from && !fresh && !isHost()) haptic('light');
-  S.rv.shown = to;
-  requestAnimationFrame(() => {
-    const last = feed.lastElementChild;
-    if (last && !fresh) last.scrollIntoView({ block: 'end', behavior: 'smooth' });
-    else if (fresh) feed.scrollTop = pos.fin ? 0 : feed.scrollHeight;
-  });
-}
-function entryEl(e, animate) {
-  const el = document.createElement('article');
-  el.className = 'entry';
-  const who = document.createElement('div'); who.className = 'who';
-  const b = document.createElement('b'); b.textContent = nameOf(e.by);
-  const drawing = e.k % 2 === 1;
-  who.append(avatar(e.by, true), b, document.createTextNode(verbOf(e.k)));
-  el.append(who);
-  if (drawing) {
-    const strokes = strokesFrom(e.v && e.v.s);
-    if (!strokes.length) { const p = document.createElement('div'); p.className = 'blank'; p.textContent = 'Foglio bianco'; el.append(p); return el; }
-    const cv = document.createElement('canvas'); cv.className = 'sheet';
-    el.append(cv);
-    requestAnimationFrame(() => {
-      const w = Math.min($('feed').clientWidth - 4, 440);
-      sizeCanvas(cv, w, 2);
-      if (animate) S.rv.stops.push(replay(cv, strokes)); else render(cv, strokes);
-    });
-  } else {
-    const p = document.createElement('p'); p.className = 'said';
-    const t = textOf(e);
-    if (t) p.textContent = t; else { p.textContent = 'Non ha scritto niente'; p.classList.add('empty'); }
-    el.append(p);
-  }
-  return el;
-}
-function renderRevealChrome() {
-  const m = S.meta; if (!m || m.status !== 'reveal') return;
-  const pos = revealPos(), N = m.n, owner = m.order[pos.c], host = isHost();
-  $('albumEyebrow').textContent = `Album ${pos.c + 1} di ${N}`;
-  $('albumTitle').textContent = 'L’album di ' + nameOf(owner);
-  $('share').hidden = !(pos.fin || pos.s >= N);
-  const albums = $('albums'); albums.hidden = !pos.fin;
-  if (pos.fin) {
-    albums.textContent = '';
-    m.order.forEach((s, c) => {
-      const b = document.createElement('button'); b.type = 'button';
-      b.setAttribute('aria-pressed', c === pos.c);
-      b.append(avatar(s, true), document.createTextNode(nameOf(s)));
-      b.onclick = () => { S.rv.browse = c; onReveal(); };
-      albums.append(b);
-    });
-    const on = albums.querySelector('[aria-pressed="true"]');
-    if (on) on.scrollIntoView({ block: 'nearest', inline: 'center' });
-  }
-  $('stepRow').hidden = !host || pos.fin;
-  $('prev').disabled = pos.c === 0 && pos.s <= 1;
-  $('again').hidden = !host || !pos.fin;
-  $('exitReveal').hidden = !pos.fin;
-  if (!pos.fin) $('next').textContent = pos.s < N ? 'Avanti' : pos.c < N - 1 ? 'Album successivo' : 'Fine';
-  $('revealHint').textContent = pos.fin
-    ? (host ? 'Sfogliate gli album. Quando volete, rigiocate con gli stessi amici.' : `Sfogliate gli album. Quando volete, ${nameOf(m.host)} avvia la prossima partita.`)
-    : (host ? 'Tocca Avanti per mostrare a tutti il prossimo passaggio.' : `${nameOf(m.host)} sta sfogliando gli album per tutti.`);
-  $('revealHint').hidden = host && !pos.fin;
-}
-function revealNext() {
-  const m = S.meta; if (!m || !isHost()) return;
-  const nv = nextReveal(m.reveal || { c: 0, s: 1 }, m.n);
-  quiet(net.patch(room('meta'), { reveal: nv, at: net.now() }));
-}
-function revealPrev() {
-  const m = S.meta; if (!m || !isHost()) return;
-  const nv = prevReveal(m.reveal || { c: 0, s: 1 }, m.n);
-  if (!nv) return;
-  quiet(net.patch(room('meta'), { reveal: nv, at: net.now() }));
-}
 async function newGame() {
   const ok = await ask('Nuova partita?', 'Gli album di questa partita verranno cancellati. Salvate prima quelli che volete tenere.', 'Nuova partita');
   if (ok) resetToLobby();
@@ -941,117 +749,9 @@ async function openGameMenu() {
   } else if (pick === 'leave') leaveRoom();
 }
 
-async function shareAlbum() {
-  const c = revealPos().c, who = nameOf(S.meta.order[c]);
-  const btn = $('share'); if (btn.disabled) return;
-  btn.disabled = true; btn.classList.add('busy');
-  try {
-    const blob = await albumBlob({
-      code: S.code, title: 'L’album di ' + who,
-      entries: (await chainEntries(c)).map(e => ({
-        label: nameOf(e.by) + verbOf(e.k), color: colorOf(e.by), drawing: e.k % 2 === 1,
-        text: textOf(e), strokes: e.k % 2 === 1 ? strokesFrom(e.v && e.v.s) : []
-      }))
-    });
-    if (!blob) throw new Error('blob');
-    const name = `scarabokki-${S.code}-${who.toLowerCase().replace(/[^a-z0-9]+/gi, '-')}.png`;
-    const file = new File([blob], name, { type: 'image/png' });
-    if (navigator.canShare && navigator.canShare({ files: [file] })) {
-      try { await navigator.share({ files: [file], title: 'L’album di ' + who }); }
-      catch (e) { if (!e || e.name !== 'AbortError') throw e; }
-    } else {
-      const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = name;
-      document.body.append(a); a.click(); a.remove();
-      setTimeout(() => URL.revokeObjectURL(a.href), 10000);
-      toast('Immagine dell’album scaricata.');
-    }
-  } catch (e) { console.warn(e); toast('Non sono riuscito a creare l’immagine.'); }
-  btn.disabled = false; btn.classList.remove('busy');
-}
-
 // ---------------------------------------------------------------------------
 // Static wiring
 // ---------------------------------------------------------------------------
-const SHAPE_ICONS = {
-  any: '<path d="M3.5 10.5h9v9h-9z"/><circle cx="15.5" cy="8.5" r="5"/>',
-  line: '<path d="M5 19L19 5"/>',
-  rect: '<rect x="4.5" y="4.5" width="15" height="15" rx="1.5"/>',
-  ellipse: '<circle cx="12" cy="12" r="7.5"/>',
-  tri: '<path d="M12 4.5l8 14H4z"/>'
-};
-const SHAPE_ITEMS = [
-  { value: 'line', label: 'Linea' }, { value: 'rect', label: 'Rettangolo' },
-  { value: 'ellipse', label: 'Cerchio' }, { value: 'tri', label: 'Triangolo' }
-].map(it => Object.assign(it, { icon: `<svg viewBox="0 0 24 24" aria-hidden="true">${SHAPE_ICONS[it.value]}</svg>` }));
-const SIZE_NAMES = ['Sottile', 'Medio', 'Grosso'];
-function setupDrawTools() {
-  const sw = $('swatches'), tray = $('tray');
-  const renderTools = () => {
-    for (const t of ['pen', 'shape', 'rub', 'fill']) $(t).setAttribute('aria-pressed', pad.tool === t);
-    $('shapeIcon').innerHTML = SHAPE_ICONS[pad.shape || 'any'];
-    $('shape').setAttribute('aria-label', 'Forme' + (pad.shape ? ': ' + SHAPE_ITEMS.find(i => i.value === pad.shape).label.toLowerCase() : ''));
-    tray.classList.toggle('rubbing', pad.tool === 'rub');
-    tray.classList.toggle('filling', pad.tool === 'fill');
-    tray.style.setProperty('--cur', pad.color);
-    [...sw.children].forEach((b, i) => b.setAttribute('aria-checked', COLORS[i][0] === pad.color));
-    $('sizeDot').className = 'dot ' + 'sml'[pad.size];
-    $('sizeBtn').setAttribute('aria-label', 'Spessore: ' + SIZE_NAMES[pad.size].toLowerCase());
-  };
-  COLORS.forEach(([hex, name]) => {
-    const b = document.createElement('button');
-    b.type = 'button'; b.className = 'sw'; b.style.background = hex;
-    b.setAttribute('role', 'radio'); b.setAttribute('aria-label', name);
-    b.onclick = () => { pad.color = hex; if (pad.tool === 'rub') pad.tool = 'pen'; renderTools(); };
-    sw.append(b);
-  });
-  $('pen').onclick = () => { pad.tool = 'pen'; renderTools(); };
-  $('rub').onclick = () => { pad.tool = 'rub'; renderTools(); };
-  $('fill').onclick = () => { pad.tool = 'fill'; renderTools(); };
-  $('zoomReset').onclick = () => { pad.releaseAll(); pad.resetView(true); };
-  // Shapes: the first tap picks the shape tool again; when it is already on, it opens the choices.
-  $('shape').onclick = async () => {
-    if (pad.tool !== 'shape' && pad.shape) { pad.tool = 'shape'; renderTools(); return; }
-    const v = await popover($('shape'), SHAPE_ITEMS, pad.shape);
-    if (!v) return;
-    pad.shape = v; pad.tool = 'shape'; renderTools();
-    if (!store.get('shapeHint')) {
-      store.set('shapeHint', 1);
-      toast('Trascina sul foglio. Quadrati, cerchi e linee dritte si agganciano da soli.', 5000);
-    }
-  };
-  $('sizeBtn').onclick = async () => {
-    const dot = c => `<span class="dot ${c}" style="background:${pad.tool === 'rub' ? 'transparent' : pad.color}"></span>`;
-    const v = await popover($('sizeBtn'), SIZE_NAMES.map((label, i) => ({ value: i, label, icon: dot('sml'[i]) })), pad.size);
-    if (v === null) return;
-    pad.size = v; if (pad.tool === 'fill') pad.tool = 'pen';
-    renderTools();
-  };
-  renderTools();
-  let holdT = 0, repT = 0;
-  const stop = () => { clearTimeout(holdT); clearInterval(repT); };
-  const u = $('undo');
-  u.addEventListener('pointerdown', e => {
-    e.preventDefault(); pad.undo();
-    holdT = setTimeout(() => { repT = setInterval(() => { if (!pad.undo()) stop(); }, 90); }, 450);
-  });
-  ['pointerup', 'pointerleave', 'pointercancel'].forEach(t => u.addEventListener(t, stop));
-  u.addEventListener('click', e => { if (e.detail === 0) pad.undo(); });
-  window.addEventListener('keydown', e => {
-    if (screen() === 'draw' && (e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z') { e.preventDefault(); pad.undo(); }
-  });
-}
-function blockGestures() {
-  const stop = e => { if (e.cancelable) e.preventDefault(); };
-  // iOS Safari pinch-zoom (it ignores user-scalable=no)
-  for (const t of ['gesturestart', 'gesturechange', 'gestureend']) document.addEventListener(t, stop, { passive: false });
-  // two fingers anywhere never zoom the page
-  document.addEventListener('touchmove', e => { if (e.touches && e.touches.length > 1) stop(e); }, { passive: false });
-  document.addEventListener('dblclick', stop, { passive: false });
-  // on the drawing screen nothing scrolls, selects or opens a menu
-  const draw = $('s-draw');
-  draw.addEventListener('touchmove', stop, { passive: false });
-  for (const t of ['contextmenu', 'selectstart', 'dragstart']) draw.addEventListener(t, stop);
-}
 function setupTimes(el, list, key) {
   for (const v of list) {
     const b = document.createElement('button'); b.type = 'button'; b.dataset.v = v;
@@ -1068,7 +768,7 @@ async function copyCode() {
   try { await navigator.clipboard.writeText(S.code); toast('Codice copiato.'); } catch (e) {}
 }
 function setupStatic() {
-  setupDrawTools();
+  setupDrawTools(pad);
   blockGestures();
   setupTimes($('drawTimes'), CFG.drawTimes, 'draw');
   setupTimes($('writeTimes'), CFG.writeTimes, 'write');

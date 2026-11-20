@@ -18,12 +18,18 @@ npx firebase-tools deploy --only database
 ## Cosa c'è dentro
 
 - `public/index.html` schermate e stile
-- `public/app.js` il gioco: stanze, turni, rivelazione
+- `public/app.js` il gioco: home, stanza, turni, timer e collegamento dei pulsanti
+- `public/state.js` lo stato della stanza condiviso da tutte le parti (giocatori, capo, avatar)
+- `public/config.js` impostazioni del gioco e idee per le frasi
+- `public/store.js` cosa ricorda il telefono (nome, ultima partita, copie di sicurezza)
+- `public/reveal.js` gli album finali e l'immagine da condividere
+- `public/tools.js` la barra degli strumenti di disegno
 - `public/game.js` regole pure del gioco (chi lavora su quale album, fine del turno, album finali)
 - `public/draw.js` foglio da disegno: tratti, secchiello, zoom
 - `public/ui.js` pezzi d'interfaccia condivisi: schermate, messaggi, conferme, vibrazione
 - `public/album.js` immagine dell'album da salvare
 - `public/net.js` collegamento a Firebase
 - `tests/` test automatici (dal Terminale, dentro questa cartella: `npm test`)
+- `eslint.config.js` controllo del codice: nomi mancanti o inutilizzati (`npm run lint`)
 - `database.rules.json` chi può leggere e scrivere cosa nel database
 - `firebase.json`, `.firebaserc`, `.github/workflows/` configurazione per la pubblicazione
