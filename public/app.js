@@ -52,7 +52,18 @@ const room = p => 'rooms/' + S.code + (p ? '/' + p : '');
 const store = {
   get(k, d = null) { try { const v = localStorage.getItem('scarabokki.' + k); return v === null ? d : JSON.parse(v); } catch (e) { return d; } },
   set(k, v) { try { localStorage.setItem('scarabokki.' + k, JSON.stringify(v)); } catch (e) {} },
-  del(k) { try { localStorage.removeItem('scarabokki.' + k); } catch (e) {} }
+  del(k) { try { localStorage.removeItem('scarabokki.' + k); } catch (e) {} },
+  // Removes every drawing/text backup except `keep`, so old games never pile up in the browser.
+  prune(keep) {
+    try {
+      const old = [];
+      for (let i = 0; i < localStorage.length; i++) {
+        const k = localStorage.key(i);
+        if (k && k.startsWith('scarabokki.work.') && k !== 'scarabokki.' + keep) old.push(k);
+      }
+      old.forEach(k => localStorage.removeItem(k));
+    } catch (e) {}
+  }
 };
 const noop = () => {};
 const quiet = p => (p && p.catch ? p.catch(err => console.warn('[scarabokki]', err && (err.code || err.message))) : p);
@@ -402,7 +413,8 @@ function onMeta(m) {
   const prev = S.meta; S.meta = m;
   if (m.status === 'lobby') {
     if (S.doneSub) { S.doneSub(); S.doneSub = null; S.doneKey = null; }
-    S.roundKey = null; S.task = null; clearFeed(); S.rv.key = null;
+    S.roundKey = null; S.task = null; clearFeed(); S.rv.key = null; S.rv.browse = null;
+    store.prune(null);
     pad.releaseAll(); pad.locked = true;
     renderLobby(); show('lobby');
     if (prev && prev.status !== 'lobby' && m.host !== S.seat) {
@@ -425,6 +437,7 @@ function onMeta(m) {
   if (m.status === 'reveal') {
     if (S.doneSub) { S.doneSub(); S.doneSub = null; S.doneKey = null; }
     S.roundKey = null; S.task = null;
+    store.prune(null);      // the game is over: its backups are no longer needed
     onReveal();
   }
 }
@@ -545,8 +558,8 @@ async function startRound(r, live) {
   if (token !== S.roundToken || !S.task) return;
   const t = S.task;
   const local = store.get(localKey(r));
-  // drop backups from other rounds of this room
-  if (r > 0) store.del(localKey(r - 1));
+  // drop every other backup: earlier rounds, earlier games, other rooms
+  store.prune(localKey(r));
 
   if (kind === 'draw') {
     t.prompt = src ? src.v.t.trim() : idea(hash(S.code + ':' + c + ':' + r));
@@ -793,7 +806,7 @@ function chainEntries(c) {
 }
 function revealPos() {
   const m = S.meta, N = m.n, rv = m.reveal || { c: 0, s: 1 };
-  if (rv.fin) return { c: S.rv.browse !== null ? S.rv.browse : Math.min(rv.c, N - 1), s: N, fin: true };
+  if (rv.fin) return { c: S.rv.browse !== null && S.rv.browse < N ? S.rv.browse : Math.min(rv.c, N - 1), s: N, fin: true };
   return { c: Math.min(rv.c, N - 1), s: Math.max(1, Math.min(rv.s, N)), fin: false };
 }
 async function onReveal() {
