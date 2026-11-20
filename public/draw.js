@@ -313,7 +313,7 @@ function anchored(u, p, s, r) {     // the view with scale s and angle r that pu
   const c = Math.cos(r), n = Math.sin(r);
   return { s, r, tx: p.x - s * (c * u.x - n * u.y), ty: p.y - s * (n * u.x + c * u.y) };
 }
-function roundRectPath(c, x, y, w, h, r) {
+export function roundRectPath(c, x, y, w, h, r) {
   c.beginPath();
   if (c.roundRect) c.roundRect(x, y, w, h, r); else c.rect(x, y, w, h);
 }
@@ -414,7 +414,7 @@ export class Pad {
   }
   animateTo(to, ms = 300) {
     this.finishAnim();
-    if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) { this.v = { ...to }; this.live = false; this.snap = null; this.redraw(); this.notifyView(); return; }
+    if (reduced()) { this.v = { ...to }; this.live = false; this.snap = null; this.redraw(); this.notifyView(); return; }
     // glide around the middle of the screen: zoom, turn and slide together
     const C = this.center(), from = { ...this.v }, dr = wrap(to.r - from.r);
     const uf = unitAt(from, C), ut = unitAt(to, C), t0 = performance.now();

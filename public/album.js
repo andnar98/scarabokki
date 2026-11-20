@@ -1,5 +1,5 @@
 // Renders one album as a single tall picture, ready to send in the group chat.
-import { RATIO, UNIT, paintInto } from './draw.js';
+import { RATIO, UNIT, paintInto, roundRectPath as roundRect } from './draw.js';
 
 const DISPLAY = 'ui-rounded, "SF Pro Rounded", "Nunito", system-ui, sans-serif';
 const BODY = '-apple-system, BlinkMacSystemFont, system-ui, "Segoe UI", Roboto, sans-serif';
@@ -13,10 +13,6 @@ function wrapLines(ctx, text, max) {
   }
   if (line) lines.push(line);
   return lines.length ? lines : [''];
-}
-function roundRect(ctx, x, y, w, h, r) {
-  ctx.beginPath();
-  if (ctx.roundRect) ctx.roundRect(x, y, w, h, r); else ctx.rect(x, y, w, h);
 }
 
 // album: { code, title, entries: [{ label, color, drawing, text, strokes }] }  ->  PNG Blob

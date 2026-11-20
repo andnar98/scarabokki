@@ -1,7 +1,7 @@
 // Game rules: albums, rounds and the reveal.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { kindOf, albumOf, authorOf, roundOver, nextReveal, prevReveal } from '../public/game.js';
+import { kindOf, albumOf, authorOf, roundMs, roundOver, nextReveal, prevReveal } from '../public/game.js';
 
 const players = n => Array.from({ length: n }, (_, i) => 'p' + i);
 
@@ -42,6 +42,11 @@ test('nessuno riceve due volte di fila dallo stesso giocatore', () => {
   for (let c = 0; c < 5; c++) {
     for (let k = 1; k < 5; k++) assert.notEqual(authorOf(order, c, k), authorOf(order, c, k - 1));
   }
+});
+
+test('ogni turno dura il tempo giusto: disegno o scrittura', () => {
+  const set = { draw: 90, write: 45 };
+  assert.deepEqual([0, 1, 2, 3].map(r => roundMs(set, r)), [45000, 90000, 45000, 90000]);
 });
 
 const base = { order: ['a', 'b', 'c'], now: 1000, endsAt: 5000, grace: 3000, presenceLoaded: true, gone: () => false };

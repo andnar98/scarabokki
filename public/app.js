@@ -2,7 +2,7 @@ import * as net from './net.js';
 import { Pad, COLORS, RATIO, render, replay, sizeCanvas, release, strokesFrom, encode, strokeKey } from './draw.js';
 import { $, screen, showScreen, toast, ask, menu, popover, dismissTop, haptic, syncRows } from './ui.js';
 import { albumBlob } from './album.js';
-import { kindOf, albumOf, authorOf, roundOver, nextReveal, prevReveal } from './game.js';
+import { kindOf, albumOf, authorOf, roundMs, roundOver, nextReveal, prevReveal } from './game.js';
 
 // ---------------------------------------------------------------------------
 // Settings
@@ -79,7 +79,10 @@ function isGone(seat, now) {
 const isHost = () => !!S.meta && S.meta.host === S.seat;
 const fmt = ms => { const s = Math.max(0, Math.ceil(ms / 1000)); return Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0'); };
 const lobbyIds = () => Object.keys(S.players).sort((a, b) => (S.players[a].joined || 0) - (S.players[b].joined || 0) || (a < b ? -1 : 1));
-const settings = () => Object.assign({}, CFG.defaults, (S.meta && S.meta.settings) || {});
+const settingsOf = m => Object.assign({}, CFG.defaults, (m && m.settings) || {});
+const settings = () => settingsOf(S.meta);
+// A name as typed: no spaces at the ends, single spaces inside, not too long.
+const cleanName = s => s.trim().replace(/\s+/g, ' ').slice(0, CFG.nameMax);
 const gameKey = () => (S.meta && S.meta.game) || 0;
 
 function avatar(seat, small) {
@@ -169,7 +172,7 @@ function onBack() {
   if (!S.seat || !m) return;
   if (m.status === 'lobby') leaveRoom(); else openGameMenu();
 }
-function getName() { return $('name').value.trim().replace(/\s+/g, ' ').slice(0, CFG.nameMax); }
+function getName() { return cleanName($('name').value); }
 
 async function showHome(prefill) {
   detach();
@@ -323,7 +326,7 @@ function showClaim(code) {
     meta = v;
     if (!v) { stopClaim(); showHome(); toast('La partita è finita.'); return; }
     if (v.status === 'lobby') {
-      const typed = $('claimName').value.trim().replace(/\s+/g, ' ').slice(0, CFG.nameMax);
+      const typed = cleanName($('claimName').value);
       if (typed) store.set('name', typed);
       const name = typed || (store.get('name', '') || '').trim();
       stopClaim();
@@ -486,7 +489,7 @@ async function kick(id) {
   const ok = await ask('Togliere ' + nameOf(id) + '?', 'Potrà rientrare con il codice della stanza.', 'Togli', { danger: true });
   if (!ok) return;
   const p = S.players[id];
-  quiet(net.patch(room(), { [`players/${id}`]: null, [`members/${p && p.uid}`]: null, [`presence/${id}`]: null }));
+  quiet(net.patch(room(), { [`players/${id}`]: null, [`presence/${id}`]: null, ...(p ? { [`members/${p.uid}`]: null } : {}) }));
 }
 async function invite() {
   const url = location.origin + location.pathname + '#' + S.code;
@@ -507,7 +510,7 @@ async function startGame() {
   try {
     await net.patch(room(), {
       'meta/status': 'playing', 'meta/round': 0, 'meta/rkey': '0', 'meta/n': ids.length, 'meta/order': ids,
-      'meta/endsAt': now + set.write * 1000 + CFG.intro, 'meta/at': now, 'meta/reveal': null,
+      'meta/endsAt': now + roundMs(set, 0) + CFG.intro, 'meta/at': now, 'meta/reveal': null,
       done: null, work: null
     });
   } catch (e) { console.warn(e); toast('Non sono riuscito a far partire il gioco. Riprova.'); $('start').disabled = false; }
@@ -539,7 +542,7 @@ async function startRound(r, live) {
   const c = albumOf(order, S.seat, r);
   let kind = kindOf(r);
   S.roundKey = m.rkey; S.submitted = false; S.autoSent = null;
-  const set = settings(), span = (r % 2 ? set.draw : set.write) * 1000;
+  const set = settings(), span = roundMs(set, r);
   S.task = { r, c, kind, token, ready: false, text: '', note: '', span, warned: false };
   pad.locked = true;
   intro(r, N);
@@ -754,10 +757,10 @@ async function advance(r) {
     await net.txn(room('meta'), m => {
       if (m === null) return m;
       if (m.status !== 'playing' || m.round !== r) return;
-      const now = net.now(), next = r + 1, set = Object.assign({}, CFG.defaults, m.settings || {});
+      const now = net.now(), next = r + 1, set = settingsOf(m);
       m.at = now;
       if (next >= m.n) { m.status = 'reveal'; m.round = next; m.rkey = null; m.endsAt = null; m.reveal = { c: 0, s: 1 }; }
-      else { m.round = next; m.rkey = String(next); m.endsAt = now + (next % 2 ? set.draw : set.write) * 1000 + CFG.intro; }
+      else { m.round = next; m.rkey = String(next); m.endsAt = now + roundMs(set, next) + CFG.intro; }
       return m;
     });
   } catch (e) { console.warn('[scarabokki] advance', e && e.message); }

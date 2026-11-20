@@ -7,6 +7,9 @@ export const kindOf = r => (r === 0 ? 'first' : r % 2 ? 'draw' : 'describe');
 // The album a player works on in round r (albums are numbered like the seats in `order`).
 export const albumOf = (order, seat, r) => (order.indexOf(seat) + r) % order.length;
 
+// How long round r lasts, in ms: drawing rounds use the drawing time, the others the writing time.
+export const roundMs = (set, r) => (r % 2 ? set.draw : set.write) * 1000;
+
 // Who made step k of album c.
 export function authorOf(order, c, k) {
   const N = order.length;
