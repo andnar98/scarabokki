@@ -29,6 +29,7 @@ npx firebase-tools deploy --only database
 - `public/ui.js` pezzi d'interfaccia condivisi: schermate, messaggi, conferme, vibrazione
 - `public/album.js` immagine dell'album da salvare
 - `public/net.js` collegamento a Firebase
+- `tests-rules/` test delle regole del database: girano solo su GitHub, nell'emulatore di Firebase, ogni volta che cambiano le regole
 - `tests/` test automatici (dal Terminale, dentro questa cartella: `npm test`)
 - `eslint.config.js` controllo del codice: nomi mancanti o inutilizzati (`npm run lint`)
 - `database.rules.json` chi può leggere e scrivere cosa nel database
