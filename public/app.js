@@ -258,7 +258,7 @@ async function createRoom() {
       } : undefined));
     } catch (e) { console.warn(e); }
     if (ok) {
-      quiet(net.put(`index/${code}`, now));
+      quiet(net.put(`index/${code}`, String(now)));   // as text: the database rules can only compare it that way
       await joinLobby(code, name);
       setTimeout(cleanup, 4000);
       return;
@@ -270,8 +270,9 @@ async function createRoom() {
 // Rooms nobody has used for a day are deleted, so the free database never fills up.
 async function cleanup() {
   try {
-    const idx = (await net.get('index')) || {};
-    const old = Object.keys(idx).filter(c => idx[c] < net.now() - 86400000).slice(0, 12);
+    // Only rooms older than a day can be listed (database rules): active rooms stay hidden.
+    const idx = (await net.oldest('index', String(net.now() - 86400000 - 60000), 12)) || {};
+    const old = Object.keys(idx);
     for (const c of old) {
       const at = await net.get(`rooms/${c}/meta/at`);
       if (at && at > net.now() - 86400000) continue;

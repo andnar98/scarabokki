@@ -4,7 +4,8 @@ import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.14.1/fireba
 import { getAuth, signInAnonymously } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-auth.js';
 import {
   getDatabase, ref, onValue, get as fbGet, set, update, remove,
-  runTransaction, onDisconnect, serverTimestamp
+  runTransaction, onDisconnect, serverTimestamp,
+  query, orderByValue, endAt, limitToFirst
 } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-database.js';
 
 const firebaseConfig = {
@@ -36,6 +37,8 @@ export function on(path, cb) {
   return onValue(ref(db, path), s => cb(s.val()), err => console.warn('[net] listen', path, err && err.code));
 }
 export async function get(path) { return (await fbGet(ref(db, path))).val(); }
+// The first `n` children whose value is at most `upTo` (e.g. rooms created before a time).
+export async function oldest(path, upTo, n) { return (await fbGet(query(ref(db, path), orderByValue(), endAt(upTo), limitToFirst(n)))).val(); }
 export function put(path, value) { return set(ref(db, path), value); }
 export function patch(path, values) { return update(ref(db, path), values); }
 export function del(path) { return remove(ref(db, path)); }
